@@ -1,0 +1,66 @@
+# ── Secrets / credentials ───────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+**/credentials*.json
+**/service-account*.json
+**/*-key.json
+gcp-key*.json
+oauth_token*.json
+firebase-adminsdk*.json
+env-vars.yaml
+
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.tox/
+
+# ── Node / Frontend ────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.parcel-cache/
+*.tsbuildinfo
+.eslintcache
+
+# ── IDE / OS ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Logs / runtime ─────────────────────────────────────────────────
+*.log
+logs/
+*.pid
+*.sock
+celerybeat-schedule
+
+# ── Local SQLite / data caches ─────────────────────────────────────
+*.db
+*.sqlite*
+data/*.db*
+
+# ── Legacy / migration leftovers (kept on disk, not in repo) ──────
+backend-old/
+backend-old 2/
+backend-old\ 2/
+
+# ── Build artefacts ────────────────────────────────────────────────
+.gcloudignore
+.dockerignore.local
