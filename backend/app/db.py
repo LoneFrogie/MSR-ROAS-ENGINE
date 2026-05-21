@@ -387,6 +387,47 @@ async def get_weight_count() -> int:
 
 # ─── Scored Social Posts ─────────────────────────────────────────────
 
+async def save_draft_score(draft: Dict) -> None:
+    """Persist a pre-post draft score. Indexed by caption_hash for later lookup."""
+    db = _get_db()
+    doc_id = draft.get("caption_hash") or draft.get("draft_id")
+    if not doc_id:
+        return
+    await db.collection("draft_scores").document(doc_id).set(draft)
+
+
+async def get_draft_score(caption_hash: str) -> Optional[Dict]:
+    """Find a draft pre-score by caption_hash. Returns None if not found."""
+    db = _get_db()
+    snap = await db.collection("draft_scores").document(caption_hash).get()
+    return snap.to_dict() if snap.exists else None
+
+
+async def list_draft_scores(limit: int = 100, with_actuals_only: bool = False) -> List[Dict]:
+    """List draft scores. If with_actuals_only, only those that have been matched to a live post."""
+    db = _get_db()
+    query = db.collection("draft_scores").limit(limit)
+    results = []
+    async for doc in query.stream():
+        d = doc.to_dict()
+        if with_actuals_only and not d.get("actual_score"):
+            continue
+        results.append(d)
+    results.sort(key=lambda r: (r.get("scored_at") or ""), reverse=True)
+    return results
+
+
+async def attach_actual_to_draft(caption_hash: str, actual: Dict) -> bool:
+    """Update a draft with the actual live-post score for accuracy tracking."""
+    db = _get_db()
+    ref = db.collection("draft_scores").document(caption_hash)
+    snap = await ref.get()
+    if not snap.exists:
+        return False
+    await ref.update({"actual_score": actual})
+    return True
+
+
 async def save_scored_post(post: Dict) -> None:
     """Persist a single scored post (keyed by post_id)."""
     db = _get_db()

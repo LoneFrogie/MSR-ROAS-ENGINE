@@ -36,6 +36,20 @@ export const generateSeoSuggestions = (maxPages = 5) =>
 export const getThemeSnippet = () => api.get('/seo/theme-snippet').then(r => r.data);
 export const getPostScoringConfig = () => api.get('/social/posts/scoring-config').then(r => r.data);
 export const refreshPostMetrics = () => api.post('/social/posts/refresh-metrics').then(r => r.data);
+export const listDraftScores = (startDate = null, endDate = null) =>
+  api.get('/social/posts/drafts', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data);
+export const getPredictionAccuracy = () => api.get('/social/posts/prediction-accuracy').then(r => r.data);
+export const scoreDraftPost = (caption, platform, mediaType, file) => {
+  const form = new FormData();
+  form.append('caption', caption || '');
+  form.append('platform', platform || 'instagram');
+  form.append('media_type', mediaType || 'IMAGE');
+  if (file) form.append('file', file);
+  return api.post('/social/posts/score-draft', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000,  // Gemini multimodal can take 60-90s for video
+  }).then(r => r.data);
+};
 export const getPendingSeoSuggestions = () =>
   api.get('/seo/suggestions/pending').then(r => r.data);
 export const approveSeoSuggestion = (id, selectedFields = null) =>

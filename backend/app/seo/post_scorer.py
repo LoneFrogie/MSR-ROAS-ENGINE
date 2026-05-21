@@ -49,6 +49,47 @@ TIER_THRESHOLDS = {
 }
 
 
+def _normalize_caption_for_hash(caption: str) -> str:
+    """Same normalization used by /score-draft endpoint — must stay in sync."""
+    import re
+    if not caption:
+        return ""
+    s = caption.strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"https?://\S+", "", s)
+    return s[:500]
+
+
+async def _find_matching_draft(caption: str):
+    """
+    Look up a draft pre-score by caption hash.
+    Tries strict hash (full normalized) first, then loose hash (first 100 chars).
+    Returns None if no match.
+    """
+    import hashlib
+    from app import db as _db
+    norm = _normalize_caption_for_hash(caption)
+    if len(norm) < 20:  # Avoid false matches on tiny captions
+        return None
+    # Strict: full normalized caption
+    full_hash = hashlib.sha256(norm.encode("utf-8")).hexdigest()
+    try:
+        d = await _db.get_draft_score(full_hash)
+        if d:
+            return d
+    except Exception:
+        pass
+    # Loose: first 100 chars (matches if caption was lightly edited before publish)
+    prefix = norm[:100]
+    if len(prefix) >= 20:
+        prefix_hash = hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+        try:
+            return await _db.get_draft_score(prefix_hash)
+        except Exception:
+            return None
+    return None
+
+
 def _compute_overall(scores: Dict[str, float]) -> int:
     """Deterministic weighted-average of the 7 creative criteria, 0-100."""
     total = 0.0
@@ -200,6 +241,95 @@ OUTPUT (return JSON matching this schema exactly):
         return {"error": str(e), "post_id": post.get("id")}
 
 
+async def score_draft_post(
+    caption: str,
+    platform: str = "instagram",
+    media_type: str = "IMAGE",
+    media_bytes: Optional[bytes] = None,
+    media_mime: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Score a DRAFT post (not yet published) using the same rubric as live posts.
+    Accepts raw bytes for image/video so Gemini can analyze the visual directly.
+    Returns scoring + suggested rewrites (same schema as score_post).
+    """
+    _configure()
+    if not settings.GEMINI_API_KEY:
+        return {"error": "GEMINI_API_KEY not configured"}
+
+    schema = {
+        "scores": {
+            "hook": "int 0-10",
+            "message": "int 0-10",
+            "visual": "int 0-10",
+            "brand": "int 0-10",
+            "mobile": "int 0-10",
+            "script": "int 0-10",
+            "pacing": "int 0-10",
+        },
+        "strengths": ["1-2 sentences"],
+        "weaknesses": ["1-2 sentences"],
+        "recommendations": [
+            "Specific, actionable rewrite or shoot direction (1-3 items)"
+        ],
+        "suggested_caption": "string — rewritten caption on brand voice",
+        "suggested_hook": "string — 6-12 words, first line / first 3 seconds",
+        "predicted_performance": "string — one sentence calling out expected stop-rate / engagement risk",
+    }
+
+    prompt = f"""Score this DRAFT {platform} post BEFORE publishing.
+No live metrics exist yet — judge purely on creative quality and predicted performance.
+
+DRAFT POST:
+{json.dumps({
+    "platform": platform,
+    "media_type": media_type,
+    "caption": (caption or "")[:1500],
+}, indent=2)}
+
+{"The image/video is attached. Analyze it for: composition, lighting, brand presence, on-platform mobile framing, hook strength (first frame), and pacing if video." if media_bytes else "No media uploaded — score visual/pacing as 5 (neutral baseline) and weight the analysis on caption + message."}
+
+OUTPUT (return JSON matching this schema exactly):
+{json.dumps(schema, indent=2)}
+"""
+
+    try:
+        model = genai.GenerativeModel(
+            MODEL_NAME,
+            system_instruction=SYSTEM_PROMPT,
+            generation_config={
+                "response_mime_type": "application/json",
+                "temperature": 0.4,
+            },
+        )
+
+        # Build Gemini input: text + optional inline media
+        if media_bytes and media_mime:
+            inputs = [
+                {"mime_type": media_mime, "data": media_bytes},
+                prompt,
+            ]
+        else:
+            inputs = [prompt]
+
+        resp = await model.generate_content_async(inputs)
+        result = json.loads(resp.text.strip())
+
+        # Apply the same deterministic weighting as live posts
+        sub = result.get("scores", {}) or {}
+        result["overall_score"] = _compute_overall(sub)
+        result["tier"] = _compute_tier(result["overall_score"])
+        result["scoring_weights"] = SCORING_WEIGHTS
+        result["caption"] = (caption or "")[:500]
+        result["platform"] = platform
+        result["media_type"] = media_type
+        result["is_draft"] = True
+        return result
+    except Exception as e:
+        logger.error(f"Draft scoring failed: {e}")
+        return {"error": str(e)}
+
+
 async def score_recent_posts(
     meta_social,
     max_posts: int = 10,
@@ -253,6 +383,27 @@ async def score_recent_posts(
     for p in in_range:
         scored = await score_post(p)
         if "error" not in scored:
+            # Try to attach a matching pre-score draft (caption-hash lookup)
+            try:
+                pre = await _find_matching_draft(scored.get("caption", ""))
+                if pre:
+                    scored["pre_score"] = {
+                        "overall_score": pre.get("overall_score"),
+                        "tier": pre.get("tier"),
+                        "scored_at": pre.get("scored_at"),
+                        "caption_hash": pre.get("caption_hash"),
+                        "delta": (scored.get("overall_score") or 0) - (pre.get("overall_score") or 0),
+                    }
+                    # Persist the actual score back onto the draft for accuracy tracking
+                    await _db.attach_actual_to_draft(pre["caption_hash"], {
+                        "overall_score": scored.get("overall_score"),
+                        "tier": scored.get("tier"),
+                        "post_id": scored.get("post_id"),
+                        "scored_at": scored.get("created_time"),
+                    })
+            except Exception as e:
+                logger.debug(f"Draft lookup failed for post: {e}")
+
             try:
                 await _db.save_scored_post(scored)
             except Exception as e:

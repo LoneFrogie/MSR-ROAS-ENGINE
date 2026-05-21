@@ -5,7 +5,7 @@ FastAPI router exposing engine status, snapshots, actions, and manual triggers.
 from datetime import datetime
 from typing import List, Optional, Dict
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Body
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Body, File, Form, UploadFile
 from pydantic import BaseModel
 
 from app.models.schemas import (
@@ -469,6 +469,168 @@ async def bulk_enable_campaigns(
         except Exception as e:
             results.append({"campaign_id": cid, "ok": False, "error": str(e)})
     return {"results": results, "total": len(results), "succeeded": sum(1 for r in results if r["ok"])}
+
+
+# ─── Score a DRAFT post before publishing ───────────────────────────
+
+@router.post("/social/posts/score-draft")
+async def score_draft_post_endpoint(
+    caption: str = Form(...),
+    platform: str = Form("instagram"),
+    media_type: str = Form("IMAGE"),
+    file: Optional[UploadFile] = File(None),
+):
+    """
+    Score a pre-post draft (caption + optional image/video) on the same
+    7-criteria rubric used for live posts. No persistence — returns the
+    score + suggestions only.
+
+    Limits: file ≤ 20MB. Allowed types: image/* and video/*.
+    """
+    from app.seo.post_scorer import score_draft_post
+
+    media_bytes = None
+    media_mime = None
+    if file is not None:
+        # Cap file size to avoid runaway memory + Gemini limits
+        MAX_BYTES = 20 * 1024 * 1024
+        media_bytes = await file.read()
+        if len(media_bytes) > MAX_BYTES:
+            raise HTTPException(413, f"File too large: {len(media_bytes)} bytes > 20MB cap")
+        media_mime = file.content_type or "application/octet-stream"
+        if not (media_mime.startswith("image/") or media_mime.startswith("video/")):
+            raise HTTPException(415, f"Unsupported media type: {media_mime}")
+
+    result = await score_draft_post(
+        caption=caption,
+        platform=platform,
+        media_type=media_type,
+        media_bytes=media_bytes,
+        media_mime=media_mime,
+    )
+    if "error" in result:
+        raise HTTPException(500, result["error"])
+
+    # Persist to draft_scores so later live-post scoring can match it.
+    # Save TWO docs: full-caption hash (strict) + first-100-chars hash (loose)
+    # so small edits between draft and publish still match.
+    import hashlib
+    from datetime import datetime as _dt
+    norm_full = _normalize_caption(caption)
+    norm_prefix = norm_full[:100]
+    caption_hash = hashlib.sha256(norm_full.encode("utf-8")).hexdigest()
+    prefix_hash = hashlib.sha256(norm_prefix.encode("utf-8")).hexdigest() if len(norm_prefix) >= 20 else None
+    result["caption_hash"] = caption_hash
+    result["prefix_hash"] = prefix_hash
+    result["scored_at"] = _dt.utcnow().isoformat()
+
+    try:
+        from app import db as _db
+        await _db.save_draft_score(result)
+        # Also save under prefix_hash for loose lookup (only if caption is long enough)
+        if prefix_hash and prefix_hash != caption_hash:
+            loose_copy = dict(result)
+            loose_copy["caption_hash"] = prefix_hash
+            loose_copy["is_prefix_alias"] = True
+            await _db.save_draft_score(loose_copy)
+        result["persisted"] = True
+    except Exception as e:
+        import logging
+        logging.getLogger("roas_engine").warning(f"Could not persist draft score: {e}")
+        result["persisted"] = False
+
+    return result
+
+
+def _normalize_caption(caption: str) -> str:
+    """Normalize a caption for hashing: collapse whitespace + lowercase + strip emojis."""
+    import re
+    if not caption:
+        return ""
+    s = caption.strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    # Strip URLs (often added/removed on publish)
+    s = re.sub(r"https?://\S+", "", s)
+    return s[:500]  # First 500 chars, normalized
+
+
+# ─── List saved draft scores (history) ───────────────────────────────
+
+@router.get("/social/posts/drafts")
+async def list_draft_scores_endpoint(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 100,
+):
+    """
+    Return all previously-scored drafts (pre-post). Optionally filter by date.
+    Used by the 'Past Drafts' history view in the Pre-Post Scoring tab.
+    """
+    from app import db as _db
+    drafts = await _db.list_draft_scores(limit=limit)
+    if start_date or end_date:
+        def _in_range(d):
+            sa = (d.get("scored_at") or "")[:10]
+            if start_date and sa < start_date:
+                return False
+            if end_date and sa > end_date:
+                return False
+            return True
+        drafts = [d for d in drafts if _in_range(d)]
+    return {"count": len(drafts), "drafts": drafts}
+
+
+# ─── Prediction accuracy: how good is pre-scoring vs actuals ─────────
+
+@router.get("/social/posts/prediction-accuracy")
+async def prediction_accuracy_summary():
+    """
+    Aggregate accuracy of pre-scoring vs actual live-post scores.
+    Returns mean absolute error, bias direction, sample list.
+    """
+    from app import db as _db
+    drafts = await _db.list_draft_scores(limit=500, with_actuals_only=True)
+    if not drafts:
+        return {
+            "matched_count": 0,
+            "mean_absolute_error": None,
+            "bias": None,
+            "samples": [],
+        }
+
+    deltas = []
+    rows = []
+    for d in drafts:
+        pre = d.get("overall_score") or 0
+        act = (d.get("actual_score") or {}).get("overall_score") or 0
+        delta = act - pre
+        deltas.append(delta)
+        rows.append({
+            "caption": (d.get("caption") or "")[:80],
+            "platform": d.get("platform"),
+            "media_type": d.get("media_type"),
+            "scored_at": d.get("scored_at"),
+            "pre_score": pre,
+            "actual_score": act,
+            "delta": delta,
+        })
+
+    abs_deltas = [abs(x) for x in deltas]
+    mae = round(sum(abs_deltas) / len(abs_deltas), 1) if abs_deltas else 0
+    bias = round(sum(deltas) / len(deltas), 1) if deltas else 0  # +ve means under-prediction
+    rows.sort(key=lambda r: abs(r["delta"]), reverse=True)
+
+    return {
+        "matched_count": len(drafts),
+        "mean_absolute_error": mae,
+        "bias": bias,  # positive = pre-score consistently underestimates; negative = overestimates
+        "bias_label": (
+            "Pre-scoring tends to UNDERESTIMATE — live posts perform better" if bias > 3
+            else "Pre-scoring tends to OVERESTIMATE — live posts perform worse" if bias < -3
+            else "Pre-scoring is calibrated within ±3 points"
+        ),
+        "samples": rows[:20],
+    }
 
 
 # ─── Refresh metrics on already-scored posts (no re-scoring) ────────

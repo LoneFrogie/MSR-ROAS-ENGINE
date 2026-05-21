@@ -9,7 +9,8 @@ import {
   getSEOOverview, getSiteCrawl,
   generateSeoSuggestions, getPendingSeoSuggestions,
   approveAction, rejectAction, approveSeoSuggestion, rejectSeoField,
-  scorePosts, listSavedScoredPosts, getThemeSnippet, refreshPostMetrics,
+  scorePosts, listSavedScoredPosts, getThemeSnippet, refreshPostMetrics, scoreDraftPost,
+  listDraftScores, getPredictionAccuracy,
 } from '../services/api';
 import MetricCard from '../components/MetricCard';
 
@@ -70,6 +71,7 @@ export default function SEOPage() {
   const tabs = [
     { id: 'onpage', label: 'On-Page SEO Audit', icon: Monitor },
     { id: 'social', label: 'Social Post Performance', icon: Sparkles },
+    { id: 'prepost', label: 'Pre-Post Scoring', icon: Sparkles },
     { id: 'organic', label: 'Organic & Paid Intelligence', icon: Search },
   ];
 
@@ -94,6 +96,7 @@ export default function SEOPage() {
 
       {activeTab === 'onpage' && <OnPageTab crawlData={crawlData} crawlLoading={crawlLoading} expandedPage={expandedPage} setExpandedPage={setExpandedPage} />}
       {activeTab === 'social' && <PostScoring />}
+      {activeTab === 'prepost' && <PrePostScoring />}
       {activeTab === 'organic' && <OrganicTab data={data} loading={loading} />}
     </div>
   );
@@ -375,17 +378,44 @@ const CRITERIA_LEGEND = [
   { key: 'pacing', label: 'Pacing', desc: 'Video edit rhythm; for images, narrative flow of the carousel.' },
 ];
 
-function MetricChip({ label, value, tone }) {
+function MetricChip({ label, value, tone, tooltip }) {
   const toneCls = tone === 'good' ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
                 : tone === 'weak' ? 'bg-red-50 text-red-700 border-red-100'
                 : tone === 'ok'   ? 'bg-amber-50 text-amber-700 border-amber-100'
                 : 'bg-gray-50 text-gray-700 border-gray-100';
   return (
-    <div className={`rounded border ${toneCls} px-1.5 py-1`}>
+    <div className={`rounded border ${toneCls} px-1.5 py-1`} title={tooltip}>
       <div className="text-[9px] uppercase tracking-wide opacity-70 leading-tight">{label}</div>
       <div className="font-semibold leading-tight">{value}</div>
     </div>
   );
+}
+
+/**
+ * Engagement rate benchmarks (2026 data from Rival IQ, Hootsuite, Social Insider).
+ * Returns {tone, label} for a given platform/media-type/ER decimal (0–1).
+ */
+function erBenchmark(platform, mediaType, erDecimal) {
+  const er = (erDecimal || 0) * 100;  // convert to %
+  const isReel = mediaType === 'VIDEO' || mediaType === 'REELS';
+
+  // Thresholds: { weak, ok, good, excellent }
+  let thresholds;
+  if (platform === 'facebook') {
+    thresholds = [0.05, 0.27, 1.0];   // weak < 0.05% < ok < 0.27% < good < 1% < excellent
+  } else if (isReel) {
+    thresholds = [1.0, 3.0, 5.0];     // IG Reels
+  } else {
+    thresholds = [0.5, 1.0, 3.0];     // IG Image/Carousel
+  }
+  const [weakMax, okMax, goodMax] = thresholds;
+  const tone = er < weakMax ? 'weak' : er < okMax ? 'ok' : 'good';
+  const label = er < weakMax ? 'Below industry median'
+              : er < okMax   ? 'On par with industry median'
+              : er < goodMax ? 'Above median (healthy)'
+              : 'Excellent — algorithm-favored';
+  const benchmark = `Benchmark for ${platform}${isReel ? ' Reel' : ''}: <${weakMax}% poor · ${weakMax}-${okMax}% median · ${okMax}-${goodMax}% good · >${goodMax}% excellent`;
+  return { tone, label, benchmark, formula: 'ER = (likes + comments + shares + saves) ÷ reach' };
 }
 
 function ScoringRubricInfo() {
@@ -483,6 +513,329 @@ function ScoringRubricInfo() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─── Pre-Post Scoring (draft before publishing) ─────────────────── */
+
+function PrePostScoring() {
+  const [caption, setCaption] = useState('');
+  const [platform, setPlatform] = useState('instagram');
+  const [mediaType, setMediaType] = useState('IMAGE');
+  const [file, setFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [scoring, setScoring] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  // ── History view ──
+  const today = new Date().toISOString().split('T')[0];
+  const monthAgo = new Date(Date.now() - 28 * 86400000).toISOString().split('T')[0];
+  const [histStart, setHistStart] = useState(monthAgo);
+  const [histEnd, setHistEnd] = useState(today);
+  const [drafts, setDrafts] = useState([]);
+  const [draftsLoading, setDraftsLoading] = useState(false);
+  const [accuracy, setAccuracy] = useState(null);
+
+  const refreshDrafts = async () => {
+    setDraftsLoading(true);
+    try {
+      const r = await listDraftScores(histStart, histEnd);
+      setDrafts(r.drafts || []);
+    } catch (_) {} finally { setDraftsLoading(false); }
+    try { setAccuracy(await getPredictionAccuracy()); } catch (_) {}
+  };
+
+  useEffect(() => { refreshDrafts(); /* eslint-disable-next-line */ }, []);
+  // Refresh history after a new score saves
+  useEffect(() => { if (result?.persisted) refreshDrafts(); /* eslint-disable-next-line */ }, [result]);
+
+  const tierColor = (t) => ({
+    A: 'bg-emerald-100 text-emerald-700',
+    B: 'bg-blue-100 text-blue-700',
+    C: 'bg-amber-100 text-amber-700',
+    D: 'bg-red-100 text-red-700',
+  }[t] || 'bg-gray-100 text-gray-600');
+
+  const onFile = (e) => {
+    const f = e.target.files?.[0] || null;
+    setFile(f);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(f ? URL.createObjectURL(f) : null);
+    // Auto-detect media type
+    if (f) {
+      if (f.type.startsWith('video/')) setMediaType('VIDEO');
+      else if (f.type.startsWith('image/')) setMediaType('IMAGE');
+    }
+  };
+
+  const handleScore = async () => {
+    if (!caption.trim() && !file) {
+      setError('Add a caption or upload media to score');
+      return;
+    }
+    setScoring(true);
+    setError(null);
+    setResult(null);
+    try {
+      const r = await scoreDraftPost(caption, platform, mediaType, file);
+      setResult(r);
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message || 'Scoring failed');
+    } finally {
+      setScoring(false);
+    }
+  };
+
+  return (
+    <div className="bg-gradient-to-br from-violet-50 to-pink-50 rounded-xl shadow-sm border border-violet-100 p-5 space-y-4">
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <Sparkles size={18} className="text-violet-600" /> Pre-Post Scoring
+        </h3>
+        <p className="text-xs text-gray-600 mt-0.5">
+          Score a draft post before publishing using the same 7-criteria rubric.
+          Gemini analyzes the caption + visual and predicts performance risk.
+        </p>
+      </div>
+
+      {/* Show the rubric reference */}
+      <ScoringRubricInfo />
+
+      {/* Input form */}
+      <div className="bg-white rounded-lg border border-gray-100 p-4 space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">Platform</label>
+            <select
+              value={platform}
+              onChange={e => setPlatform(e.target.value)}
+              className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
+            >
+              <option value="instagram">Instagram</option>
+              <option value="facebook">Facebook</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">Media Type</label>
+            <select
+              value={mediaType}
+              onChange={e => setMediaType(e.target.value)}
+              className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
+            >
+              <option value="IMAGE">Image / Photo</option>
+              <option value="VIDEO">Video / Reel</option>
+              <option value="CAROUSEL_ALBUM">Carousel</option>
+              <option value="TEXT">Text only</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs font-semibold text-gray-700 block mb-1">
+            Caption / Description <span className="text-gray-400 font-normal">(supports emojis + line breaks)</span>
+          </label>
+          <textarea
+            value={caption}
+            onChange={e => setCaption(e.target.value)}
+            placeholder="Paste your draft caption here..."
+            rows={5}
+            className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm font-mono"
+          />
+          <div className="text-[10px] text-gray-400 mt-0.5 text-right">{caption.length}/1500</div>
+        </div>
+
+        <div>
+          <label className="text-xs font-semibold text-gray-700 block mb-1">
+            Upload Image or Video <span className="text-gray-400 font-normal">(optional, ≤20MB)</span>
+          </label>
+          <input
+            type="file"
+            accept="image/*,video/*"
+            onChange={onFile}
+            className="block w-full text-xs file:mr-3 file:px-3 file:py-1.5 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-violet-100 file:text-violet-700 hover:file:bg-violet-200"
+          />
+          {previewUrl && (
+            <div className="mt-2">
+              {file?.type.startsWith('video/') ? (
+                <video src={previewUrl} controls className="max-h-48 rounded border border-gray-100" />
+              ) : (
+                <img src={previewUrl} alt="" className="max-h-48 rounded border border-gray-100" />
+              )}
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={handleScore}
+          disabled={scoring}
+          className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+        >
+          {scoring ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+          {scoring ? 'Gemini scoring draft…' : 'Score draft'}
+        </button>
+      </div>
+
+      {error && (
+        <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">{error}</div>
+      )}
+
+      {/* Result card */}
+      {result && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex gap-4">
+            {previewUrl && (
+              <div className="shrink-0">
+                {file?.type.startsWith('video/') ? (
+                  <video src={previewUrl} className="w-24 h-24 object-cover rounded-lg border border-gray-100" />
+                ) : (
+                  <img src={previewUrl} alt="" className="w-24 h-24 object-cover rounded-lg border border-gray-100" />
+                )}
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              {/* Header */}
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${result.platform === 'instagram' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}`}>{result.platform}</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${tierColor(result.tier)}`}>Tier {result.tier} · {result.overall_score}/100</span>
+                <span className="text-[11px] text-gray-500 uppercase">{result.media_type}</span>
+                <span className="text-[11px] px-1.5 py-0.5 bg-violet-100 text-violet-700 rounded font-semibold">DRAFT</span>
+              </div>
+
+              {/* Score grid */}
+              <div className="grid grid-cols-7 gap-1 mb-3">
+                {CRITERIA_LEGEND.map(c => {
+                  const v = (result.scores || {})[c.key] || 0;
+                  return (
+                    <div key={c.key} className="text-center" title={c.desc}>
+                      <div className={`text-sm font-bold ${v >= 8 ? 'text-emerald-600' : v >= 5 ? 'text-amber-600' : 'text-red-600'}`}>{v}</div>
+                      <div className="text-[9px] text-gray-500 uppercase">{c.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Predicted performance */}
+              {result.predicted_performance && (
+                <div className="bg-amber-50 border border-amber-100 rounded p-2 mb-3 text-xs">
+                  <span className="font-semibold text-amber-700">Predicted performance: </span>
+                  <span className="text-gray-700">{result.predicted_performance}</span>
+                </div>
+              )}
+
+              {/* Strengths / Weaknesses */}
+              <div className="grid grid-cols-2 gap-3 mb-3 text-xs">
+                <div>
+                  <div className="font-semibold text-emerald-700 mb-1">Strengths</div>
+                  <ul className="text-gray-700 space-y-0.5 list-disc ml-4">
+                    {(result.strengths || []).map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                </div>
+                <div>
+                  <div className="font-semibold text-red-700 mb-1">Weaknesses</div>
+                  <ul className="text-gray-700 space-y-0.5 list-disc ml-4">
+                    {(result.weaknesses || []).map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                </div>
+              </div>
+
+              {result.recommendations?.length > 0 && (
+                <div className="bg-violet-50 rounded p-2 mb-2 text-xs">
+                  <div className="font-semibold text-violet-700 mb-1">Recommendations</div>
+                  <ul className="text-gray-700 space-y-0.5 list-disc ml-4">
+                    {result.recommendations.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {result.suggested_hook && (
+                <div className="text-xs mb-1">
+                  <span className="font-semibold text-gray-600">Suggested hook: </span>
+                  <span className="text-gray-800 italic">"{result.suggested_hook}"</span>
+                </div>
+              )}
+              {result.suggested_caption && (
+                <div className="text-xs">
+                  <div className="font-semibold text-gray-600 mb-0.5">Suggested caption:</div>
+                  <div className="text-gray-800 italic bg-gray-50 rounded p-2 whitespace-pre-line">{result.suggested_caption}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Past Drafts history ── */}
+      <div className="bg-white rounded-lg border border-gray-100 p-4">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div>
+            <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+              <Calendar size={14} /> Past Drafts ({drafts.length})
+            </h4>
+            {accuracy?.matched_count > 0 && (
+              <div className="text-[11px] text-gray-500 mt-0.5">
+                {accuracy.matched_count} matched to live posts ·
+                MAE <b>{accuracy.mean_absolute_error}</b> pts · {accuracy.bias_label}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-1 text-xs">
+            <input type="date" value={histStart} max={histEnd}
+              onChange={e => setHistStart(e.target.value)}
+              className="border border-gray-200 rounded px-2 py-1 bg-white" />
+            <span className="text-gray-400">to</span>
+            <input type="date" value={histEnd} min={histStart} max={today}
+              onChange={e => setHistEnd(e.target.value)}
+              className="border border-gray-200 rounded px-2 py-1 bg-white" />
+            <button onClick={refreshDrafts} disabled={draftsLoading}
+              className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium disabled:opacity-50">
+              {draftsLoading ? '…' : 'Apply'}
+            </button>
+          </div>
+        </div>
+
+        {drafts.length === 0 ? (
+          <div className="text-xs text-gray-500 py-4 text-center">
+            No drafts in this date range. Score a draft above and it'll appear here.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {drafts.map(d => (
+              <div key={d.caption_hash} className="border border-gray-100 rounded p-2 text-xs hover:bg-gray-50">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${d.platform === 'instagram' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}`}>{d.platform}</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${tierColor(d.tier)}`}>
+                    Tier {d.tier} · {d.overall_score}/100
+                  </span>
+                  <span className="text-[10px] text-gray-500 uppercase">{d.media_type}</span>
+                  <span className="text-[10px] text-gray-400">
+                    {d.scored_at ? new Date(d.scored_at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                  </span>
+                  {d.actual_score && (
+                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                      (d.actual_score.overall_score - d.overall_score) >= 0
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-red-50 text-red-700 border-red-200'
+                    }`}>
+                      Live {d.actual_score.overall_score} · Δ{(d.actual_score.overall_score - d.overall_score) >= 0 ? '+' : ''}{d.actual_score.overall_score - d.overall_score}
+                    </span>
+                  )}
+                </div>
+                <div className="text-gray-700 italic line-clamp-2 leading-snug">
+                  "{d.caption || '(no caption)'}"
+                </div>
+                {d.suggested_caption && (
+                  <details className="mt-1">
+                    <summary className="text-[10px] text-violet-600 cursor-pointer hover:underline">Show suggested rewrite</summary>
+                    <div className="text-gray-700 italic bg-violet-50 rounded p-1.5 mt-1 whitespace-pre-line">{d.suggested_caption}</div>
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -712,6 +1065,20 @@ function PostScoring() {
                 <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                   <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${p.platform === 'instagram' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}`}>{p.platform}</span>
                   <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${tierColor(p.tier)}`}>Tier {p.tier} · {p.overall_score}/100</span>
+                  {p.pre_score && (
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        p.pre_score.delta > 0
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : p.pre_score.delta < 0
+                          ? 'bg-red-50 text-red-700 border-red-200'
+                          : 'bg-gray-50 text-gray-700 border-gray-200'
+                      }`}
+                      title={`Pre-score on ${p.pre_score.scored_at?.slice(0,10)} predicted ${p.pre_score.overall_score}. Actual is ${p.overall_score}. Δ ${p.pre_score.delta >= 0 ? '+' : ''}${p.pre_score.delta}.`}
+                    >
+                      Pre {p.pre_score.overall_score} → Actual {p.overall_score} · {p.pre_score.delta >= 0 ? '+' : ''}{p.pre_score.delta}
+                    </span>
+                  )}
                   {p.created_time && (
                     <span className="text-[11px] text-gray-500">
                       📅 {new Date(p.created_time).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -798,8 +1165,15 @@ function PostScoring() {
                     <MetricChip label="Comments"    value={(p.metrics?.comments || 0).toLocaleString()} />
                     <MetricChip label="Shares"      value={(p.metrics?.shares || 0).toLocaleString()} />
                     <MetricChip label="Saves"       value={(p.metrics?.saves || 0).toLocaleString()} />
-                    <MetricChip label="ER"          value={`${((p.metrics?.engagement_rate || 0) * 100).toFixed(1)}%`}
-                                tone={(p.metrics?.engagement_rate || 0) >= 0.03 ? 'good' : (p.metrics?.engagement_rate || 0) >= 0.01 ? 'ok' : 'weak'} />
+                    {(() => {
+                      const bm = erBenchmark(p.platform, p.media_type, p.metrics?.engagement_rate || 0);
+                      return (
+                        <MetricChip label="ER"
+                                    value={`${((p.metrics?.engagement_rate || 0) * 100).toFixed(1)}%`}
+                                    tone={bm.tone}
+                                    tooltip={`${bm.formula}\n${bm.label}\n${bm.benchmark}`} />
+                      );
+                    })()}
                   </div>
                   {(p.metrics?.clicks > 0 || p.metrics?.ctr > 0) && (
                     <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-[11px] mt-1.5">

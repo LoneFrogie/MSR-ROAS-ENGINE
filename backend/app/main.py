@@ -75,11 +75,14 @@ async def lifespan(app: FastAPI):
     global scheduler
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
 
-    # Initialize Firestore persistence
+    # Initialize Firestore persistence (soft failure for local dev without GCP creds)
     from app.db import init_db, get_pending_actions
-    await init_db()
-    await engine.learning.load_from_db()
-    logger.info("Firestore initialized, learning state loaded.")
+    try:
+        await init_db()
+        await engine.learning.load_from_db()
+        logger.info("Firestore initialized, learning state loaded.")
+    except Exception as e:
+        logger.warning(f"Firestore startup skipped (likely local dev without creds): {e}")
 
     # Rehydrate the last snapshot from Firestore so the dashboard isn't empty
     # immediately after a container restart while the next cycle runs.
