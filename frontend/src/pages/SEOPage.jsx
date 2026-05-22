@@ -1044,17 +1044,26 @@ function TrendingInspiration() {
                   {adaptingId === t.trend_id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
                   {adaptingId === t.trend_id ? 'Adapting + saving draft…' : 'Adapt to brand voice'}
                 </button>
-                {t.google_search_url && (
-                  <a href={t.google_search_url} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-cyan-700 hover:underline flex items-center gap-1"
-                    title="Run a Google search for real examples of this trend">
-                    Search Google <ExternalLink size={10} />
+                {/* Direct post URL when we actually have one — opens the exact viral post */}
+                {t.direct_post_url && (
+                  <a href={t.direct_post_url} target="_blank" rel="noopener noreferrer"
+                    className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 hover:bg-emerald-200 font-semibold flex items-center gap-1"
+                    title={t.direct_post_source || 'Direct post URL'}>
+                    Open viral post ↗
                   </a>
                 )}
+                {/* Platform-native search deeplinks (always work) */}
+                {t.platform_links?.map((lnk, i) => (
+                  <a key={i} href={lnk.url} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-cyan-700 hover:underline flex items-center gap-1"
+                    title={lnk.label}>
+                    {lnk.label} <ExternalLink size={10} />
+                  </a>
+                ))}
                 {t.grounding_sources?.length > 0 && (
                   <details className="text-xs">
                     <summary className="text-cyan-700 hover:underline cursor-pointer">
-                      {t.grounding_sources.length} source{t.grounding_sources.length > 1 ? 's' : ''} from research
+                      {t.grounding_sources.length} research source{t.grounding_sources.length > 1 ? 's' : ''}
                     </summary>
                     <div className="mt-1 ml-2 space-y-0.5">
                       {t.grounding_sources.map((s, i) => (

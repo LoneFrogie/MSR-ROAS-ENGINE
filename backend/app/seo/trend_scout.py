@@ -68,7 +68,9 @@ async def get_trending_content(
                     "pacing": "int 0-10",
                 },
                 "adaptability_for_ms_read": "int 0-10 — how easily this can be adapted for a plus-size women's fashion brand",
-                "search_query": "string — a 4-8 word Google search query that surfaces real-world examples of this trend",
+                "search_query": "string — a 4-8 word search query that surfaces real-world examples of this trend",
+                "example_post_url": "string OR null — REAL URL of one actual viral post you found during grounding (instagram.com/p/..., instagram.com/reel/..., tiktok.com/@user/video/...). MUST be a URL you actually saw in search results, never invented. If unsure, return null.",
+                "primary_hashtag": "string — the single most identifying hashtag for this trend (no #)",
             }
         ],
         "summary": "string — 2-3 sentence overview of the dominant content patterns this week",
@@ -89,6 +91,12 @@ post scores high on every dimension. A meme can score 9/hook + 4/brand.
 Return EXACTLY {count} trends ranked by virality strength + adaptability for a
 plus-size women's fashion brand (MS. READ, sells modest-friendly larger-size clothing
 in Malaysia/SEA).
+
+CRITICAL — example_post_url rules:
+- Only fill it if you ACTUALLY saw the URL in search results during grounding.
+- Allowed shapes: instagram.com/p/SHORTCODE, instagram.com/reel/SHORTCODE, tiktok.com/@USER/video/ID
+- If you didn't find a real URL, return null. NEVER invent a URL.
+- Generic profile URLs (instagram.com/some_user) are not acceptable — we need the specific post.
 
 OUTPUT JSON matching this schema:
 {json.dumps(schema, indent=2)}
@@ -145,29 +153,77 @@ OUTPUT JSON matching this schema:
             logger.error(f"Trend research failed: {e2}")
             return {"error": str(e2), "trends": []}
 
-    # Add deterministic overall_score + tier on each trend (same math as live posts).
-    # Attach real grounding citations (round-robin from response metadata).
+    # Validate example_post_url + build platform-native deeplinks + grounding citations
+    import re
     import uuid
     from urllib.parse import quote_plus
     from datetime import datetime as _dt
+
+    # Patterns for valid TikTok/IG post URLs (specific posts only — no profile URLs)
+    IG_POST = re.compile(r"^https?://(www\.)?instagram\.com/(p|reel|reels|tv)/[A-Za-z0-9_-]+/?", re.I)
+    TT_POST = re.compile(r"^https?://(www\.)?tiktok\.com/@[A-Za-z0-9._-]+/video/\d+", re.I)
+
+    def _is_valid_post_url(u: str) -> bool:
+        if not u or not isinstance(u, str):
+            return False
+        return bool(IG_POST.match(u) or TT_POST.match(u))
+
+    # Extract any valid platform-post URLs from grounding citations (real URLs Gemini saw)
+    platform_post_urls = [c for c in grounding_citations if _is_valid_post_url(c.get("url", ""))]
+
     trends_list = result.get("trends", []) or []
     for i, t in enumerate(trends_list):
         sub = t.get("scores", {}) or {}
         t["overall_score"] = _compute_overall(sub)
         t["tier"] = _compute_tier(t["overall_score"])
         t["trend_id"] = uuid.uuid4().hex[:12]
-        # Build a Google search URL as guaranteed-working fallback the user can click
+
+        platform = (t.get("platform") or "").lower()
+        hashtag = (t.get("primary_hashtag") or "").lstrip("#").strip()
         sq = t.get("search_query") or t.get("hook") or t.get("theme") or "viral fashion content"
-        t["google_search_url"] = f"https://www.google.com/search?q={quote_plus(sq[:200])}"
-        # Attach 1-3 real grounding citations (cycle through the pool)
+
+        # ─ Resolve the "exact content" link in priority order ─
+        # 1. Gemini's example_post_url IF it actually parses as a real post URL
+        example_url = t.get("example_post_url")
+        if example_url and _is_valid_post_url(example_url):
+            t["direct_post_url"] = example_url
+            t["direct_post_source"] = "Example post"
+        elif platform_post_urls:
+            # 2. Reuse a real platform-post URL from grounding citations (round-robin)
+            picked = platform_post_urls[i % len(platform_post_urls)]
+            t["direct_post_url"] = picked.get("url")
+            t["direct_post_source"] = "From research citations"
+            # Drop Gemini's invalid example_post_url to avoid confusion
+            t["example_post_url"] = None
+        else:
+            t["direct_post_url"] = None
+            t["example_post_url"] = None
+            t["direct_post_source"] = None
+
+        # ─ Always-working platform-native search deeplinks ─
+        platform_links = []
+        if platform == "tiktok":
+            if hashtag:
+                platform_links.append({"label": f"#{hashtag} on TikTok", "url": f"https://www.tiktok.com/tag/{quote_plus(hashtag)}"})
+            platform_links.append({"label": "Search TikTok", "url": f"https://www.tiktok.com/search?q={quote_plus(sq[:200])}"})
+        elif platform == "instagram":
+            if hashtag:
+                platform_links.append({"label": f"#{hashtag} on Instagram", "url": f"https://www.instagram.com/explore/tags/{quote_plus(hashtag)}/"})
+            platform_links.append({"label": "Search Instagram", "url": f"https://www.instagram.com/explore/search/keyword/?q={quote_plus(sq[:200])}"})
+        # Google search as universal fallback
+        platform_links.append({"label": "Search Google", "url": f"https://www.google.com/search?q={quote_plus(sq[:200])}"})
+        t["platform_links"] = platform_links
+
+        # Attach 1-3 real grounding citations as supporting evidence
         if grounding_citations:
             start = (i * 2) % len(grounding_citations)
             t["grounding_sources"] = grounding_citations[start:start + 3]
         else:
             t["grounding_sources"] = []
+
     result["scoring_weights"] = SCORING_WEIGHTS
     result["fetched_at"] = _dt.utcnow().isoformat()
-    result["all_grounding_sources"] = grounding_citations  # full pool for transparency
+    result["all_grounding_sources"] = grounding_citations
     return result
 
 
