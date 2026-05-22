@@ -36,6 +36,10 @@ export const generateSeoSuggestions = (maxPages = 5) =>
 export const getThemeSnippet = () => api.get('/seo/theme-snippet').then(r => r.data);
 export const getPostScoringConfig = () => api.get('/social/posts/scoring-config').then(r => r.data);
 export const refreshPostMetrics = () => api.post('/social/posts/refresh-metrics').then(r => r.data);
+export const getTrendingInspiration = (params = {}) =>
+  api.get('/social/trends/inspiration', { params, timeout: 180000 }).then(r => r.data);
+export const adaptTrendToBrand = (trend, opts = {}) =>
+  api.post('/social/trends/adapt', { trend, ...opts }, { timeout: 120000 }).then(r => r.data);
 export const listDraftScores = (startDate = null, endDate = null) =>
   api.get('/social/posts/drafts', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data);
 export const getPredictionAccuracy = () => api.get('/social/posts/prediction-accuracy').then(r => r.data);

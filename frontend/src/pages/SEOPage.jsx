@@ -10,7 +10,7 @@ import {
   generateSeoSuggestions, getPendingSeoSuggestions,
   approveAction, rejectAction, approveSeoSuggestion, rejectSeoField,
   scorePosts, listSavedScoredPosts, getThemeSnippet, refreshPostMetrics, scoreDraftPost,
-  listDraftScores, getPredictionAccuracy,
+  listDraftScores, getPredictionAccuracy, getTrendingInspiration, adaptTrendToBrand,
 } from '../services/api';
 import MetricCard from '../components/MetricCard';
 
@@ -72,6 +72,7 @@ export default function SEOPage() {
     { id: 'onpage', label: 'On-Page SEO Audit', icon: Monitor },
     { id: 'social', label: 'Social Post Performance', icon: Sparkles },
     { id: 'prepost', label: 'Pre-Post Scoring', icon: Sparkles },
+    { id: 'trends', label: 'Trending Inspiration', icon: TrendingUp },
     { id: 'organic', label: 'Organic & Paid Intelligence', icon: Search },
   ];
 
@@ -97,6 +98,7 @@ export default function SEOPage() {
       {activeTab === 'onpage' && <OnPageTab crawlData={crawlData} crawlLoading={crawlLoading} expandedPage={expandedPage} setExpandedPage={setExpandedPage} />}
       {activeTab === 'social' && <PostScoring />}
       {activeTab === 'prepost' && <PrePostScoring />}
+      {activeTab === 'trends' && <TrendingInspiration />}
       {activeTab === 'organic' && <OrganicTab data={data} loading={loading} />}
     </div>
   );
@@ -836,6 +838,265 @@ function PrePostScoring() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ─── Trending Inspiration (live viral content research) ─────────── */
+
+function TrendingInspiration() {
+  const [industry, setIndustry] = useState('fashion plus-size women');
+  const [region, setRegion] = useState('Malaysia / Southeast Asia');
+  const [platforms, setPlatforms] = useState({ instagram: true, tiktok: true });
+  const [count, setCount] = useState(10);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [adaptingId, setAdaptingId] = useState(null);
+  const [adapted, setAdapted] = useState({});  // trend_id -> adapted result
+
+  const tierColor = (t) => ({
+    A: 'bg-emerald-100 text-emerald-700',
+    B: 'bg-blue-100 text-blue-700',
+    C: 'bg-amber-100 text-amber-700',
+    D: 'bg-red-100 text-red-700',
+  }[t] || 'bg-gray-100 text-gray-600');
+
+  const handleResearch = async () => {
+    setLoading(true);
+    setError(null);
+    setData(null);
+    setAdapted({});
+    try {
+      const platformList = Object.keys(platforms).filter(k => platforms[k]).join(',');
+      const r = await getTrendingInspiration({
+        industry, region, platforms: platformList, count,
+      });
+      setData(r);
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message || 'Research failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdapt = async (trend) => {
+    setAdaptingId(trend.trend_id);
+    try {
+      const r = await adaptTrendToBrand(trend, { target_platform: trend.platform });
+      setAdapted(prev => ({ ...prev, [trend.trend_id]: r }));
+    } catch (e) {
+      setAdapted(prev => ({ ...prev, [trend.trend_id]: { error: e.response?.data?.detail || e.message } }));
+    } finally {
+      setAdaptingId(null);
+    }
+  };
+
+  return (
+    <div className="bg-gradient-to-br from-cyan-50 to-violet-50 rounded-xl shadow-sm border border-cyan-100 p-5 space-y-4">
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <TrendingUp size={18} className="text-cyan-600" /> Trending Inspiration
+        </h3>
+        <p className="text-xs text-gray-600 mt-0.5">
+          Live research on what's currently viral on Instagram + TikTok in your niche.
+          Same 7-criteria scoring lets you see WHY each trend works. Click "Adapt to brand"
+          to auto-save a brand-voice rewrite as a draft.
+        </p>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-white rounded-lg border border-gray-100 p-4 space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">Industry / Niche</label>
+            <input value={industry} onChange={e => setIndustry(e.target.value)}
+              className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">Region</label>
+            <input value={region} onChange={e => setRegion(e.target.value)}
+              className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm" />
+          </div>
+        </div>
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2 text-sm">
+            <label className="font-semibold text-gray-700">Platforms:</label>
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={platforms.instagram}
+                onChange={e => setPlatforms(p => ({...p, instagram: e.target.checked}))} />
+              <span className="text-pink-700">IG</span>
+            </label>
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={platforms.tiktok}
+                onChange={e => setPlatforms(p => ({...p, tiktok: e.target.checked}))} />
+              <span className="text-gray-700">TikTok</span>
+            </label>
+          </div>
+          <div className="flex items-center gap-1 text-sm">
+            <label className="font-semibold text-gray-700">Count:</label>
+            <select value={count} onChange={e => setCount(parseInt(e.target.value))}
+              className="border border-gray-200 rounded px-2 py-1">
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={20}>20</option>
+            </select>
+          </div>
+          <button onClick={handleResearch} disabled={loading}
+            className="ml-auto px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 text-sm font-medium disabled:opacity-50 flex items-center gap-2">
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+            {loading ? 'Researching viral content…' : 'Research trends'}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">{error}</div>
+      )}
+
+      {loading && (
+        <div className="bg-cyan-50 border border-cyan-100 rounded-lg p-3 text-cyan-700 text-sm flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin" /> Gemini is searching the web for viral content. This takes 30–90 sec.
+        </div>
+      )}
+
+      {data?.summary && (
+        <div className="bg-violet-50 border border-violet-100 rounded p-3 text-sm">
+          <div className="font-semibold text-violet-800 mb-1">This week's pattern</div>
+          <div className="text-gray-700">{data.summary}</div>
+          {data.fetched_at && (
+            <div className="text-[10px] text-gray-500 mt-1">As of {new Date(data.fetched_at).toLocaleString()}</div>
+          )}
+        </div>
+      )}
+
+      {data?.trends?.length > 0 && (
+        <div className="space-y-3">
+          {data.trends.map(t => (
+            <div key={t.trend_id} className="bg-white rounded-lg border border-gray-200 p-4">
+              {/* Header */}
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${t.platform === 'instagram' ? 'bg-pink-100 text-pink-700' : 'bg-gray-900 text-white'}`}>{t.platform}</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${tierColor(t.tier)}`}>Tier {t.tier} · {t.overall_score}/100</span>
+                <span className="text-[11px] text-gray-500 uppercase">{t.content_type}</span>
+                {t.adaptability_for_ms_read != null && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold border bg-cyan-50 text-cyan-700 border-cyan-200"
+                    title="How easily this can be adapted to MS. READ brand voice">
+                    Adapt {t.adaptability_for_ms_read}/10
+                  </span>
+                )}
+                {t.creator_or_brand && (
+                  <span className="text-[11px] text-gray-500">by {t.creator_or_brand}</span>
+                )}
+              </div>
+
+              {/* Hook + theme */}
+              <div className="mb-3">
+                <div className="text-xs font-semibold text-gray-600 mb-0.5">Viral hook</div>
+                <div className="text-sm text-gray-900 italic bg-gray-50 rounded p-2 mb-2">"{t.hook}"</div>
+                <div className="text-xs text-gray-600">{t.theme}</div>
+              </div>
+
+              {/* Scores grid */}
+              <div className="grid grid-cols-7 gap-1 mb-3">
+                {CRITERIA_LEGEND.map(c => {
+                  const v = (t.scores || {})[c.key] || 0;
+                  return (
+                    <div key={c.key} className="text-center" title={c.desc}>
+                      <div className={`text-sm font-bold ${v >= 8 ? 'text-emerald-600' : v >= 5 ? 'text-amber-600' : 'text-red-600'}`}>{v}</div>
+                      <div className="text-[9px] text-gray-500 uppercase">{c.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Why it works */}
+              <div className="bg-emerald-50 border border-emerald-100 rounded p-2 mb-2 text-xs">
+                <div className="font-semibold text-emerald-800 mb-0.5">Why it works</div>
+                <div className="text-gray-700">{t.why_it_works}</div>
+              </div>
+
+              {/* Format template */}
+              {t.format_template && (
+                <div className="text-xs mb-2">
+                  <span className="font-semibold text-gray-600">Replicable template: </span>
+                  <span className="text-gray-800 italic">"{t.format_template}"</span>
+                </div>
+              )}
+
+              {/* Hashtags */}
+              {t.hashtags?.length > 0 && (
+                <div className="mb-2">
+                  <div className="flex flex-wrap gap-1">
+                    {t.hashtags.map((h, i) => (
+                      <span key={i} className="px-1.5 py-0.5 bg-gray-100 text-gray-700 rounded text-[10px]">{h}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 flex-wrap mt-3 pt-2 border-t border-gray-100">
+                <button onClick={() => handleAdapt(t)}
+                  disabled={adaptingId === t.trend_id}
+                  className="px-3 py-1.5 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-xs font-medium disabled:opacity-50 flex items-center gap-1">
+                  {adaptingId === t.trend_id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  {adaptingId === t.trend_id ? 'Adapting + saving draft…' : 'Adapt to brand voice'}
+                </button>
+                {t.source_urls?.[0] && (
+                  <a href={t.source_urls[0]} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-cyan-700 hover:underline flex items-center gap-1">
+                    Source <ExternalLink size={10} />
+                  </a>
+                )}
+              </div>
+
+              {/* Adapted result */}
+              {adapted[t.trend_id] && !adapted[t.trend_id].error && (
+                <div className="mt-3 bg-violet-50 border border-violet-200 rounded p-3 text-xs">
+                  <div className="font-semibold text-violet-800 mb-1 flex items-center gap-1">
+                    <CheckCircle size={12} /> Adapted to brand voice
+                    {adapted[t.trend_id].saved_draft?.persisted && (
+                      <span className="ml-1 text-[10px] font-normal text-emerald-600">✓ saved to Past Drafts</span>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <div>
+                      <span className="font-semibold text-gray-600">Hook: </span>
+                      <span className="text-gray-800 italic">"{adapted[t.trend_id].adapted.adapted_hook}"</span>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-gray-600 mb-0.5">Caption:</div>
+                      <div className="text-gray-800 italic bg-white rounded p-2 whitespace-pre-line">{adapted[t.trend_id].adapted.adapted_caption}</div>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-600">Shoot direction: </span>
+                      <span className="text-gray-700">{adapted[t.trend_id].adapted.media_direction}</span>
+                    </div>
+                    {adapted[t.trend_id].adapted.predicted_performance && (
+                      <div className="text-gray-600">
+                        <span className="font-semibold">Predicted: </span>{adapted[t.trend_id].adapted.predicted_performance}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {adapted[t.trend_id]?.error && (
+                <div className="mt-3 bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700">
+                  Adapt failed: {adapted[t.trend_id].error}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data?.trends?.length === 0 && !loading && (
+        <div className="text-center py-6 text-gray-500 text-sm">
+          No trends returned. Try widening industry or region.
+        </div>
+      )}
     </div>
   );
 }

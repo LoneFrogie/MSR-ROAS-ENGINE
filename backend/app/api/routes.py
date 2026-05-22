@@ -554,6 +554,111 @@ def _normalize_caption(caption: str) -> str:
     return s[:500]  # First 500 chars, normalized
 
 
+# ─── Trending Inspiration: TikTok + IG live research ─────────────────
+
+@router.get("/social/trends/inspiration")
+async def get_trending_inspiration(
+    industry: str = "fashion plus-size women",
+    region: str = "Malaysia / Southeast Asia",
+    platforms: str = "instagram,tiktok",
+    count: int = 10,
+):
+    """
+    Returns a scored inspiration board of currently-viral content.
+    Uses Gemini 2.5 Flash with Google Search grounding for live web data.
+    """
+    from app.seo.trend_scout import get_trending_content
+    platform_list = [p.strip().lower() for p in platforms.split(",") if p.strip()]
+    result = await get_trending_content(
+        industry=industry,
+        region=region,
+        platforms=platform_list,
+        count=count,
+    )
+    if "error" in result and not result.get("trends"):
+        raise HTTPException(503, result["error"])
+    return result
+
+
+@router.post("/social/trends/adapt")
+async def adapt_trend_endpoint(
+    payload: Dict = Body(...),
+):
+    """
+    Adapt a trending content template to MS. READ brand voice.
+    Auto-saves the adapted version as a draft score so it appears in Past Drafts
+    and feeds prediction-accuracy tracking if published later.
+
+    Body: { trend: {...}, target_platform: "instagram" | "tiktok",
+            brand_voice: "optional override",
+            auto_score: true | false (default true) }
+    """
+    from app.seo.trend_scout import adapt_trend_to_brand
+    from app.seo.post_scorer import score_draft_post
+
+    trend = payload.get("trend") or {}
+    target_platform = payload.get("target_platform") or "instagram"
+    brand_voice = payload.get("brand_voice") or None
+    auto_score = payload.get("auto_score", True)
+
+    if not trend:
+        raise HTTPException(400, "Missing 'trend' in body")
+
+    # 1) Adapt the hook + caption to brand voice
+    adapted = await adapt_trend_to_brand(
+        trend=trend,
+        brand_voice=brand_voice or "MS. READ — modest, body-positive, plus-size women's fashion in Malaysia. Warm, empowering, never preachy. Bahasa English mix OK.",
+        target_platform=target_platform,
+    )
+    if "error" in adapted:
+        raise HTTPException(500, adapted["error"])
+
+    if not auto_score:
+        return {"adapted": adapted, "saved_draft": None}
+
+    # 2) Score the adapted caption as a draft (so it lands in Past Drafts)
+    media_type = "VIDEO" if "video" in str(trend.get("content_type", "")).lower() or "reel" in str(trend.get("content_type", "")).lower() else "IMAGE"
+    draft = await score_draft_post(
+        caption=adapted.get("adapted_caption", ""),
+        platform=target_platform,
+        media_type=media_type,
+        media_bytes=None,
+        media_mime=None,
+    )
+
+    # 3) Persist the draft with caption hashes (same logic as /score-draft endpoint)
+    if "error" not in draft:
+        import hashlib
+        from datetime import datetime as _dt
+        norm_full = _normalize_caption(adapted.get("adapted_caption", ""))
+        norm_prefix = norm_full[:100]
+        caption_hash = hashlib.sha256(norm_full.encode("utf-8")).hexdigest()
+        prefix_hash = hashlib.sha256(norm_prefix.encode("utf-8")).hexdigest() if len(norm_prefix) >= 20 else None
+        draft["caption_hash"] = caption_hash
+        draft["prefix_hash"] = prefix_hash
+        draft["scored_at"] = _dt.utcnow().isoformat()
+        draft["inspired_by_trend"] = {
+            "trend_id": trend.get("trend_id"),
+            "original_hook": trend.get("hook"),
+            "original_platform": trend.get("platform"),
+        }
+        try:
+            from app import db as _db
+            await _db.save_draft_score(draft)
+            if prefix_hash and prefix_hash != caption_hash:
+                loose = dict(draft)
+                loose["caption_hash"] = prefix_hash
+                loose["is_prefix_alias"] = True
+                await _db.save_draft_score(loose)
+            draft["persisted"] = True
+        except Exception as e:
+            import logging
+            logging.getLogger("roas_engine").warning(f"Could not persist trend-adapted draft: {e}")
+            draft["persisted"] = False
+
+    return {"adapted": adapted, "saved_draft": draft}
+
+
 # ─── List saved draft scores (history) ───────────────────────────────
 
 @router.get("/social/posts/drafts")
