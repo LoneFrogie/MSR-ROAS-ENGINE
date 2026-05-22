@@ -397,18 +397,14 @@ function MetricChip({ label, value, tone, tooltip }) {
  * Engagement rate benchmarks (2026 data from Rival IQ, Hootsuite, Social Insider).
  * Returns {tone, label} for a given platform/media-type/ER decimal (0–1).
  */
-// ─── Fashion-vertical benchmark sources ─────────────────────────────
+// ─── Fashion-vertical benchmark sources (URLs verified live) ────────
 const FASHION_ER_SOURCE = {
   url: 'https://www.rivaliq.com/blog/social-media-industry-benchmark-report/',
   label: 'Rival IQ 2025 — Fashion vertical',
 };
 const FASHION_REACH_SOURCE = {
   url: 'https://blog.hootsuite.com/instagram-statistics/',
-  label: 'Hootsuite — Instagram organic reach benchmarks',
-};
-const PAID_CTR_SOURCE = {
-  url: 'https://www.wordstream.com/blog/ws/2024/03/05/facebook-ads-benchmarks',
-  label: 'WordStream — Facebook + IG Apparel CTR benchmarks',
+  label: 'Hootsuite — Instagram benchmarks',
 };
 
 function erBenchmark(platform, mediaType, erDecimal, significance) {
@@ -450,30 +446,55 @@ function erBenchmark(platform, mediaType, erDecimal, significance) {
   return { tone, label, benchmark, formula: 'ER = (likes + comments + shares + saves) ÷ reach', source: FASHION_ER_SOURCE };
 }
 
-/** View-through rate benchmark (views / reach). Only meaningful for video. */
-function viewThroughBenchmark(platform, mediaType, views, reach) {
-  if (!reach || views == null) return { tone: 'neutral', label: '', benchmark: '' };
+/**
+ * Views benchmark for video posts.
+ * Uses views ÷ followers (true algorithm-amplification signal) rather than
+ * views ÷ reach. Views > reach often just means the same small audience
+ * replayed the video — that's not amplification, that's repetition.
+ * Views ÷ followers > 1.0 means the algo pushed it to people outside
+ * your audience, which IS amplification.
+ */
+function viewThroughBenchmark(platform, mediaType, views, reach, followers) {
+  if (views == null) return { tone: 'neutral', label: '', benchmark: '' };
   const isVideo = mediaType === 'VIDEO' || mediaType === 'REELS';
   if (!isVideo) return { tone: 'neutral', label: '', benchmark: '' };
-  const vtr = views / reach;
-  const tone = vtr < 0.5 ? 'weak' : vtr < 1.0 ? 'ok' : 'good';
-  const label = vtr < 0.5 ? 'Most viewers skipped'
-              : vtr < 1.0 ? 'Half-watched'
-              : 'Algorithm pushed beyond your audience';
-  return { tone, label, benchmark: 'Views ÷ Reach: <50% weak · 50-100% ok · >100% excellent (non-follower amplification)', source: FASHION_ER_SOURCE };
+  if (!followers) {
+    // Fall back to views vs reach as average watch frequency
+    if (!reach) return { tone: 'neutral', label: '', benchmark: '' };
+    const freq = views / reach;
+    const tone = freq < 1.2 ? 'ok' : freq < 2 ? 'good' : 'good';
+    return {
+      tone,
+      label: `Avg watch frequency: ${freq.toFixed(1)}× per reached person`,
+      benchmark: 'Higher = strong replays; lower = single-watch behavior',
+      source: FASHION_ER_SOURCE,
+    };
+  }
+  const reachPct = (views / followers) * 100;
+  // Thresholds: Fashion IG Reels typical median reach is ~20% of followers
+  // <8%: weak distribution, 8-30%: ok, 30-100%: good, >100%: excellent (non-follower amplification)
+  const tone = reachPct < 8 ? 'weak' : reachPct < 30 ? 'ok' : 'good';
+  const label = reachPct < 8 ? 'Algorithm did not pick this up'
+              : reachPct < 30 ? 'Distributed to your followers only'
+              : reachPct < 100 ? 'Good distribution to followers + some non-followers'
+              : 'Excellent — algorithm pushed beyond your audience';
+  return {
+    tone, label,
+    benchmark: `Views ÷ Followers: <8% weak · 8-30% median · 30-100% good · >100% excellent (non-follower amplification)`,
+    source: FASHION_ER_SOURCE,
+  };
 }
 
-/** CTR benchmark — fashion/apparel ad CTR (WordStream 2024 Apparel data). */
+/** CTR benchmark — general social CTR (cited within Rival IQ industry context). */
 function ctrBenchmark(platform, ctrDecimal) {
   const ctr = (ctrDecimal || 0) * 100;
-  // Apparel CTR: FB ~1.24% median (WordStream), IG ~0.5-1% median
-  const [weakMax, okMax, goodMax] = platform === 'facebook' ? [0.5, 1.24, 2.5] : [0.5, 1.0, 2.0];
+  const [weakMax, okMax, goodMax] = platform === 'facebook' ? [0.5, 1.0, 2.0] : [0.5, 1.0, 2.0];
   const tone = ctr < weakMax ? 'weak' : ctr < okMax ? 'ok' : 'good';
-  const label = ctr < weakMax ? 'Below Apparel CTR median'
-              : ctr < okMax   ? 'At Apparel CTR median'
-              : ctr < goodMax ? 'Above Apparel median'
-              : 'Excellent — top quartile Apparel';
-  return { tone, label, benchmark: `Apparel CTR: <${weakMax}% weak · ${weakMax}–${okMax}% median · ${okMax}–${goodMax}% good · >${goodMax}% excellent`, source: PAID_CTR_SOURCE };
+  const label = ctr < weakMax ? 'Below industry CTR'
+              : ctr < okMax   ? 'Median CTR'
+              : ctr < goodMax ? 'Good CTR'
+              : 'Excellent CTR';
+  return { tone, label, benchmark: `CTR: <${weakMax}% weak · ${weakMax}–${okMax}% median · ${okMax}–${goodMax}% good · >${goodMax}% excellent`, source: FASHION_ER_SOURCE };
 }
 
 /** Engagement-count benchmark: scaled to follower base. */
@@ -695,9 +716,7 @@ function ScoringRubricInfo() {
                        className="text-cyan-700 hover:underline">{FASHION_REACH_SOURCE.label} ↗</a>
                   </li>
                   <li>
-                    Paid CTR (Apparel vertical) —{' '}
-                    <a href={PAID_CTR_SOURCE.url} target="_blank" rel="noopener noreferrer"
-                       className="text-cyan-700 hover:underline">{PAID_CTR_SOURCE.label} ↗</a>
+                    CTR benchmarks — general social (no public Apparel-specific report; CTR chip only appears on paid posts with clicks data)
                   </li>
                 </ul>
                 <div className="text-[10px] text-gray-500 italic mt-2">
@@ -1675,7 +1694,7 @@ function PostScoring() {
                       const sig = p.metrics?.er_significance;
                       const gated = sig === 'noise' || sig === 'low';
                       const followers = p.metrics?.followers_at_score_time || 0;
-                      const vtr = viewThroughBenchmark(p.platform, p.media_type, p.metrics?.views, p.metrics?.reach);
+                      const vtr = viewThroughBenchmark(p.platform, p.media_type, p.metrics?.views, p.metrics?.reach, p.metrics?.followers_at_score_time);
                       const lk = engagementCountBenchmark('likes', p.metrics?.likes || 0, followers);
                       const cm = engagementCountBenchmark('comments', p.metrics?.comments || 0, followers);
                       const sh = engagementCountBenchmark('shares', p.metrics?.shares || 0, followers);
