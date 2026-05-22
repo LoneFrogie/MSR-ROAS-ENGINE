@@ -72,7 +72,7 @@ export default function SEOPage() {
     { id: 'onpage', label: 'On-Page SEO Audit', icon: Monitor },
     { id: 'social', label: 'Social Post Performance', icon: Sparkles },
     { id: 'prepost', label: 'Pre-Post Scoring', icon: Sparkles },
-    { id: 'trends', label: 'Trending Inspiration', icon: TrendingUp },
+    { id: 'trends', label: 'Viral Pattern Recognition', icon: TrendingUp },
     { id: 'organic', label: 'Organic & Paid Intelligence', icon: Search },
   ];
 
@@ -896,12 +896,25 @@ function TrendingInspiration() {
     <div className="bg-gradient-to-br from-cyan-50 to-violet-50 rounded-xl shadow-sm border border-cyan-100 p-5 space-y-4">
       <div>
         <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-          <TrendingUp size={18} className="text-cyan-600" /> Trending Inspiration
+          <TrendingUp size={18} className="text-cyan-600" /> Viral Pattern Recognition
         </h3>
         <p className="text-xs text-gray-600 mt-0.5">
-          Live research on what's currently viral on Instagram + TikTok in your niche.
-          Same 7-criteria scoring lets you see WHY each trend works. Click "Adapt to brand"
-          to auto-save a brand-voice rewrite as a draft.
+          Identifies trending content <span className="font-semibold">patterns / templates</span> on
+          IG + TikTok in your niche, scored on the same 7-criteria rubric so you see
+          WHY the format works. Click "Adapt to brand" to rewrite the pattern in MS. READ
+          voice and save as a draft.
+        </p>
+      </div>
+
+      {/* Honest disclaimer about what's scored */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+        <div className="font-semibold mb-0.5 flex items-center gap-1">⚠ What the score means</div>
+        <p>
+          The 0-100 score and tier are applied to the <b>pattern/template</b> Gemini identified
+          from current web research — NOT to a specific TikTok or IG post. Use this as
+          creative direction, not as endorsement of any individual creator's content.
+          When real platform-post URLs are surfaced (from research citations), they're
+          labeled "example matching this pattern", not "the post that scored 84/100".
         </p>
       </div>
 
@@ -1044,15 +1057,10 @@ function TrendingInspiration() {
                   {adaptingId === t.trend_id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
                   {adaptingId === t.trend_id ? 'Adapting + saving draft…' : 'Adapt to brand voice'}
                 </button>
-                {/* Direct post URL when we actually have one — opens the exact viral post */}
-                {t.direct_post_url && (
-                  <a href={t.direct_post_url} target="_blank" rel="noopener noreferrer"
-                    className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 hover:bg-emerald-200 font-semibold flex items-center gap-1"
-                    title={t.direct_post_source || 'Direct post URL'}>
-                    Open viral post ↗
-                  </a>
-                )}
-                {/* Platform-native search deeplinks (always work) */}
+                {/* Platform-native deeplinks — find live examples of this pattern */}
+                <span className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold mr-1">
+                  Find live examples →
+                </span>
                 {t.platform_links?.map((lnk, i) => (
                   <a key={i} href={lnk.url} target="_blank" rel="noopener noreferrer"
                     className="text-xs text-cyan-700 hover:underline flex items-center gap-1"
@@ -1060,6 +1068,14 @@ function TrendingInspiration() {
                     {lnk.label} <ExternalLink size={10} />
                   </a>
                 ))}
+                {/* If we happen to have a validated platform-post URL, label it honestly */}
+                {t.direct_post_url && (
+                  <a href={t.direct_post_url} target="_blank" rel="noopener noreferrer"
+                    className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 flex items-center gap-1"
+                    title="A real post that matches this pattern — NOT the specific post that was scored">
+                    Example post (real) <ExternalLink size={10} />
+                  </a>
+                )}
                 {t.grounding_sources?.length > 0 && (
                   <details className="text-xs">
                     <summary className="text-cyan-700 hover:underline cursor-pointer">
