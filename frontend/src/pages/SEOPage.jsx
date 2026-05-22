@@ -1044,11 +1044,29 @@ function TrendingInspiration() {
                   {adaptingId === t.trend_id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
                   {adaptingId === t.trend_id ? 'Adapting + saving draft…' : 'Adapt to brand voice'}
                 </button>
-                {t.source_urls?.[0] && (
-                  <a href={t.source_urls[0]} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-cyan-700 hover:underline flex items-center gap-1">
-                    Source <ExternalLink size={10} />
+                {t.google_search_url && (
+                  <a href={t.google_search_url} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-cyan-700 hover:underline flex items-center gap-1"
+                    title="Run a Google search for real examples of this trend">
+                    Search Google <ExternalLink size={10} />
                   </a>
+                )}
+                {t.grounding_sources?.length > 0 && (
+                  <details className="text-xs">
+                    <summary className="text-cyan-700 hover:underline cursor-pointer">
+                      {t.grounding_sources.length} source{t.grounding_sources.length > 1 ? 's' : ''} from research
+                    </summary>
+                    <div className="mt-1 ml-2 space-y-0.5">
+                      {t.grounding_sources.map((s, i) => (
+                        <div key={i}>
+                          <a href={s.url} target="_blank" rel="noopener noreferrer"
+                            className="text-cyan-700 hover:underline">
+                            {s.title || s.url} <ExternalLink size={9} className="inline" />
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 )}
               </div>
 

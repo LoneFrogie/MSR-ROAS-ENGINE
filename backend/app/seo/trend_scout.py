@@ -68,7 +68,7 @@ async def get_trending_content(
                     "pacing": "int 0-10",
                 },
                 "adaptability_for_ms_read": "int 0-10 — how easily this can be adapted for a plus-size women's fashion brand",
-                "source_urls": ["https://example.com/source-of-trend"],
+                "search_query": "string — a 4-8 word Google search query that surfaces real-world examples of this trend",
             }
         ],
         "summary": "string — 2-3 sentence overview of the dominant content patterns this week",
@@ -94,6 +94,7 @@ OUTPUT JSON matching this schema:
 {json.dumps(schema, indent=2)}
 """
 
+    grounding_citations: List[Dict[str, str]] = []
     try:
         # Try with Google Search grounding (gemini-2.5-flash supports this)
         model = genai.GenerativeModel(
@@ -107,6 +108,25 @@ OUTPUT JSON matching this schema:
         )
         resp = await model.generate_content_async(prompt)
         result = json.loads(resp.text.strip())
+
+        # Extract REAL grounding citations from response metadata (not from JSON output —
+        # those are hallucinated). Format: candidates[0].grounding_metadata.grounding_chunks
+        try:
+            for cand in (resp.candidates or []):
+                gm = getattr(cand, "grounding_metadata", None) or getattr(cand, "groundingMetadata", None)
+                if not gm:
+                    continue
+                chunks = getattr(gm, "grounding_chunks", None) or getattr(gm, "groundingChunks", None) or []
+                for ch in chunks:
+                    web = getattr(ch, "web", None)
+                    if not web:
+                        continue
+                    uri = getattr(web, "uri", None)
+                    title = getattr(web, "title", None) or ""
+                    if uri:
+                        grounding_citations.append({"url": uri, "title": title})
+        except Exception as ge:
+            logger.debug(f"Could not parse grounding metadata: {ge}")
     except Exception as e:
         # Fallback: no grounding (relies on Gemini's training-data knowledge)
         logger.warning(f"Grounded retrieval failed, falling back to ungrounded: {e}")
@@ -125,16 +145,29 @@ OUTPUT JSON matching this schema:
             logger.error(f"Trend research failed: {e2}")
             return {"error": str(e2), "trends": []}
 
-    # Add deterministic overall_score + tier on each trend (same math as live posts)
+    # Add deterministic overall_score + tier on each trend (same math as live posts).
+    # Attach real grounding citations (round-robin from response metadata).
     import uuid
+    from urllib.parse import quote_plus
     from datetime import datetime as _dt
-    for t in result.get("trends", []) or []:
+    trends_list = result.get("trends", []) or []
+    for i, t in enumerate(trends_list):
         sub = t.get("scores", {}) or {}
         t["overall_score"] = _compute_overall(sub)
         t["tier"] = _compute_tier(t["overall_score"])
         t["trend_id"] = uuid.uuid4().hex[:12]
+        # Build a Google search URL as guaranteed-working fallback the user can click
+        sq = t.get("search_query") or t.get("hook") or t.get("theme") or "viral fashion content"
+        t["google_search_url"] = f"https://www.google.com/search?q={quote_plus(sq[:200])}"
+        # Attach 1-3 real grounding citations (cycle through the pool)
+        if grounding_citations:
+            start = (i * 2) % len(grounding_citations)
+            t["grounding_sources"] = grounding_citations[start:start + 3]
+        else:
+            t["grounding_sources"] = []
     result["scoring_weights"] = SCORING_WEIGHTS
     result["fetched_at"] = _dt.utcnow().isoformat()
+    result["all_grounding_sources"] = grounding_citations  # full pool for transparency
     return result
 
 
