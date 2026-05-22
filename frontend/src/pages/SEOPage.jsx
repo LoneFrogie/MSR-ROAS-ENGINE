@@ -406,6 +406,10 @@ const FASHION_REACH_SOURCE = {
   url: 'https://blog.hootsuite.com/instagram-statistics/',
   label: 'Hootsuite — Instagram benchmarks',
 };
+const APPAREL_CTR_SOURCE = {
+  url: 'https://localiq.com/blog/search-advertising-benchmarks/',
+  label: 'LocaliQ 2025 — Apparel/Fashion (search ads, 6.77% CTR)',
+};
 
 function erBenchmark(platform, mediaType, erDecimal, significance) {
   const er = (erDecimal || 0) * 100;
@@ -494,7 +498,7 @@ function ctrBenchmark(platform, ctrDecimal) {
               : ctr < okMax   ? 'Median CTR'
               : ctr < goodMax ? 'Good CTR'
               : 'Excellent CTR';
-  return { tone, label, benchmark: `CTR: <${weakMax}% weak · ${weakMax}–${okMax}% median · ${okMax}–${goodMax}% good · >${goodMax}% excellent`, source: FASHION_ER_SOURCE };
+  return { tone, label, benchmark: `CTR: <${weakMax}% weak · ${weakMax}–${okMax}% median · ${okMax}–${goodMax}% good · >${goodMax}% excellent`, source: APPAREL_CTR_SOURCE };
 }
 
 /** Engagement-count benchmark: scaled to follower base. */
@@ -700,6 +704,71 @@ function ScoringRubricInfo() {
                 </div>
               )}
 
+              {/* What each metric chip measures + how it's color-graded */}
+              <div className="pt-3 border-t border-gray-100">
+                <div className="font-semibold text-gray-800 mb-1.5">What each metric chip means</div>
+                <div className="border border-gray-100 rounded overflow-hidden">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-gray-50 text-gray-600">
+                      <tr>
+                        <th className="text-left px-2 py-1.5 font-semibold w-20">Chip</th>
+                        <th className="text-left px-2 py-1.5 font-semibold">Formula</th>
+                        <th className="text-left px-2 py-1.5 font-semibold w-44">Color logic</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-t border-gray-100">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">Reach</td>
+                        <td className="px-2 py-1.5 text-gray-600">Unique people who saw the post</td>
+                        <td className="px-2 py-1.5 text-gray-600">Tone follows Reach % (reach ÷ followers)</td>
+                      </tr>
+                      <tr className="border-t border-gray-100 bg-gray-50">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">Reach %</td>
+                        <td className="px-2 py-1.5 text-gray-600">reach ÷ followers (audience penetration)</td>
+                        <td className="px-2 py-1.5 text-gray-600">FB: &lt;2/5/10% · IG image: &lt;10/20/40% · Reels: &lt;20/50/100%</td>
+                      </tr>
+                      <tr className="border-t border-gray-100">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">Impressions</td>
+                        <td className="px-2 py-1.5 text-gray-600">Total times shown (FB v22 = same as reach)</td>
+                        <td className="px-2 py-1.5 text-gray-600">Same as Reach</td>
+                      </tr>
+                      <tr className="border-t border-gray-100 bg-gray-50">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">Views</td>
+                        <td className="px-2 py-1.5 text-gray-600">
+                          <b>views ÷ followers</b> — true algorithm-amplification signal (NOT views÷reach, which gets inflated by replays from the same small audience)
+                        </td>
+                        <td className="px-2 py-1.5 text-gray-600">
+                          &lt;8% 🔴 didn't pick up · 8-30% 🟡 followers only · 30-100% 🟢 followers + some non-followers · &gt;100% 🟢 pushed beyond audience
+                        </td>
+                      </tr>
+                      <tr className="border-t border-gray-100">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">Likes</td>
+                        <td className="px-2 py-1.5 text-gray-600">likes ÷ followers</td>
+                        <td className="px-2 py-1.5 text-gray-600">&lt;0.1% / 0.5% / 2% thresholds</td>
+                      </tr>
+                      <tr className="border-t border-gray-100 bg-gray-50">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">Comments/Shares/Saves</td>
+                        <td className="px-2 py-1.5 text-gray-600">metric ÷ followers</td>
+                        <td className="px-2 py-1.5 text-gray-600">&lt;0.01% / 0.05% / 0.2% thresholds (rarer signals)</td>
+                      </tr>
+                      <tr className="border-t border-gray-100">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">ER</td>
+                        <td className="px-2 py-1.5 text-gray-600">(likes + comments + shares + saves) ÷ reach</td>
+                        <td className="px-2 py-1.5 text-gray-600">Fashion ER benchmarks per platform; gated to gray when reach is below significance floor</td>
+                      </tr>
+                      <tr className="border-t border-gray-100 bg-gray-50">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">CTR</td>
+                        <td className="px-2 py-1.5 text-gray-600">clicks ÷ impressions (paid posts only)</td>
+                        <td className="px-2 py-1.5 text-gray-600">&lt;0.5% / 1% / 2% thresholds</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div className="text-[10px] text-gray-500 italic mt-2">
+                  <b>Significance gate:</b> when reach is below the floor (FB ≥5% / IG ≥10% of followers), the ER chip is grayed out with ⚠ and engagement chips downgrade. Prevents internal-staff likes from looking healthy on a small-reach post.
+                </div>
+              </div>
+
               {/* Sources — all benchmark references, hyperlinked */}
               <div className="pt-3 border-t border-gray-100">
                 <div className="font-semibold text-gray-800 mb-1.5">Benchmark sources (Fashion vertical)</div>
@@ -716,7 +785,10 @@ function ScoringRubricInfo() {
                        className="text-cyan-700 hover:underline">{FASHION_REACH_SOURCE.label} ↗</a>
                   </li>
                   <li>
-                    CTR benchmarks — general social (no public Apparel-specific report; CTR chip only appears on paid posts with clicks data)
+                    CTR (Apparel/Fashion vertical) —{' '}
+                    <a href={APPAREL_CTR_SOURCE.url} target="_blank" rel="noopener noreferrer"
+                       className="text-cyan-700 hover:underline">{APPAREL_CTR_SOURCE.label} ↗</a>
+                    {' '}<span className="text-gray-500">(LocaliQ publishes the Apparel benchmark for search ads at 6.77%; no equivalent public report exists for social-feed CTR, so general 0.5/1/2% thresholds apply on social posts)</span>
                   </li>
                 </ul>
                 <div className="text-[10px] text-gray-500 italic mt-2">
