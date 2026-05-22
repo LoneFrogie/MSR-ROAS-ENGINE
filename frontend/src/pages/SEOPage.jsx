@@ -440,6 +440,54 @@ function erBenchmark(platform, mediaType, erDecimal, significance) {
   return { tone, label, benchmark, formula: 'ER = (likes + comments + shares + saves) ÷ reach' };
 }
 
+/** View-through rate benchmark (views / reach). Only meaningful for video. */
+function viewThroughBenchmark(platform, mediaType, views, reach) {
+  if (!reach || views == null) return { tone: 'neutral', label: '', benchmark: '' };
+  const isVideo = mediaType === 'VIDEO' || mediaType === 'REELS';
+  if (!isVideo) return { tone: 'neutral', label: '', benchmark: '' };
+  const vtr = views / reach;
+  // For Reels, views > reach means non-follower amplification (good)
+  // <50%: weak, 50-100%: ok, >100%: good (algo boost)
+  const tone = vtr < 0.5 ? 'weak' : vtr < 1.0 ? 'ok' : 'good';
+  const label = vtr < 0.5 ? 'Most viewers skipped'
+              : vtr < 1.0 ? 'Half-watched'
+              : 'Algorithm pushed beyond your audience';
+  return { tone, label, benchmark: `Views ÷ Reach: <50% weak · 50-100% ok · >100% excellent` };
+}
+
+/** CTR benchmark. */
+function ctrBenchmark(platform, ctrDecimal) {
+  const ctr = (ctrDecimal || 0) * 100;
+  // 2026 industry data
+  const [weakMax, okMax, goodMax] = platform === 'facebook' ? [0.5, 1.0, 2.0] : [0.5, 1.0, 2.0];
+  const tone = ctr < weakMax ? 'weak' : ctr < okMax ? 'ok' : 'good';
+  const label = ctr < weakMax ? 'Below industry CTR'
+              : ctr < okMax   ? 'Median CTR'
+              : ctr < goodMax ? 'Good CTR'
+              : 'Excellent CTR';
+  return { tone, label, benchmark: `CTR: <${weakMax}% weak · ${weakMax}-${okMax}% median · ${okMax}-${goodMax}% good · >${goodMax}% excellent` };
+}
+
+/** Engagement-count benchmark: scaled to follower base. */
+function engagementCountBenchmark(metric, count, followers) {
+  if (!followers) return { tone: 'neutral', label: '', benchmark: '' };
+  const rate = count / followers;
+  // Per-metric thresholds as % of followers
+  const thresholds = {
+    likes:    [0.001, 0.005, 0.02],  // 0.1% / 0.5% / 2%
+    comments: [0.0001, 0.0005, 0.002],
+    shares:   [0.0001, 0.0005, 0.002],
+    saves:    [0.0001, 0.0005, 0.002],
+  }[metric] || [0.0001, 0.001, 0.005];
+  const [weakMax, okMax, goodMax] = thresholds;
+  const tone = rate < weakMax ? 'weak' : rate < okMax ? 'ok' : 'good';
+  return {
+    tone,
+    label: rate < weakMax ? 'Low' : rate < okMax ? 'Median' : rate < goodMax ? 'Good' : 'Excellent',
+    benchmark: `${metric} ÷ followers: <${(weakMax*100).toFixed(2)}% weak · ${(okMax*100).toFixed(2)}-${(goodMax*100).toFixed(2)}% good`,
+  };
+}
+
 /** Reach penetration (reach / followers): is the post hitting enough audience? */
 function reachPenetrationBenchmark(platform, mediaType, penetrationPct) {
   const isReel = mediaType === 'VIDEO' || mediaType === 'REELS';
@@ -1572,13 +1620,48 @@ function PostScoring() {
                     Actual performance (reference)
                   </div>
                   <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-[11px]">
-                    <MetricChip label="Reach"       value={(p.metrics?.reach || 0).toLocaleString()} />
-                    <MetricChip label="Impressions" value={(p.metrics?.impressions || 0).toLocaleString()} />
-                    <MetricChip label="Views"       value={(p.metrics?.views || 0).toLocaleString()} />
-                    <MetricChip label="Likes"       value={(p.metrics?.likes || 0).toLocaleString()} />
-                    <MetricChip label="Comments"    value={(p.metrics?.comments || 0).toLocaleString()} />
-                    <MetricChip label="Shares"      value={(p.metrics?.shares || 0).toLocaleString()} />
-                    <MetricChip label="Saves"       value={(p.metrics?.saves || 0).toLocaleString()} />
+                    {(() => {
+                      const pen = p.metrics?.reach_penetration_pct;
+                      const rp = pen != null ? reachPenetrationBenchmark(p.platform, p.media_type, pen) : null;
+                      return (
+                        <>
+                          <MetricChip label="Reach"
+                                      value={(p.metrics?.reach || 0).toLocaleString()}
+                                      tone={rp?.tone}
+                                      tooltip={rp ? `${rp.label}\n${rp.benchmark}` : undefined} />
+                          <MetricChip label="Impressions"
+                                      value={(p.metrics?.impressions || 0).toLocaleString()}
+                                      tone={rp?.tone}
+                                      tooltip={rp ? `Note: FB v22 returns reach as impressions.\n${rp.label}\n${rp.benchmark}` : undefined} />
+                        </>
+                      );
+                    })()}
+                    {(() => {
+                      const sig = p.metrics?.er_significance;
+                      const gated = sig === 'noise' || sig === 'low';
+                      const followers = p.metrics?.followers_at_score_time || 0;
+                      const vtr = viewThroughBenchmark(p.platform, p.media_type, p.metrics?.views, p.metrics?.reach);
+                      const lk = engagementCountBenchmark('likes', p.metrics?.likes || 0, followers);
+                      const cm = engagementCountBenchmark('comments', p.metrics?.comments || 0, followers);
+                      const sh = engagementCountBenchmark('shares', p.metrics?.shares || 0, followers);
+                      const sv = engagementCountBenchmark('saves', p.metrics?.saves || 0, followers);
+                      // When ER is gated (reach too low) all engagement counts also become unreliable
+                      const safeTone = (b) => gated ? (b.tone === 'good' ? 'ok' : 'weak') : b.tone;
+                      return (
+                        <>
+                          <MetricChip label="Views"    value={(p.metrics?.views || 0).toLocaleString()}
+                                      tone={vtr.tone} tooltip={vtr.label ? `${vtr.label}\n${vtr.benchmark}` : undefined} />
+                          <MetricChip label="Likes"    value={(p.metrics?.likes || 0).toLocaleString()}
+                                      tone={safeTone(lk)} tooltip={lk.benchmark ? `${lk.label}\n${lk.benchmark}${gated ? '\n⚠ Reach too low — interpret cautiously' : ''}` : undefined} />
+                          <MetricChip label="Comments" value={(p.metrics?.comments || 0).toLocaleString()}
+                                      tone={safeTone(cm)} tooltip={cm.benchmark ? `${cm.label}\n${cm.benchmark}${gated ? '\n⚠ Reach too low — interpret cautiously' : ''}` : undefined} />
+                          <MetricChip label="Shares"   value={(p.metrics?.shares || 0).toLocaleString()}
+                                      tone={safeTone(sh)} tooltip={sh.benchmark ? `${sh.label}\n${sh.benchmark}${gated ? '\n⚠ Reach too low — interpret cautiously' : ''}` : undefined} />
+                          <MetricChip label="Saves"    value={(p.metrics?.saves || 0).toLocaleString()}
+                                      tone={safeTone(sv)} tooltip={sv.benchmark ? `${sv.label}\n${sv.benchmark}${gated ? '\n⚠ Reach too low — interpret cautiously' : ''}` : undefined} />
+                        </>
+                      );
+                    })()}
                     {(() => {
                       const sig = p.metrics?.er_significance;
                       const bm = erBenchmark(p.platform, p.media_type, p.metrics?.engagement_rate || 0, sig);
@@ -1605,7 +1688,15 @@ function PostScoring() {
                   {(p.metrics?.clicks > 0 || p.metrics?.ctr > 0) && (
                     <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-[11px] mt-1.5">
                       <MetricChip label="Clicks" value={(p.metrics?.clicks || 0).toLocaleString()} />
-                      <MetricChip label="CTR"    value={`${((p.metrics?.ctr || 0) * 100).toFixed(2)}%`} />
+                      {(() => {
+                        const cb = ctrBenchmark(p.platform, p.metrics?.ctr || 0);
+                        return (
+                          <MetricChip label="CTR"
+                                      value={`${((p.metrics?.ctr || 0) * 100).toFixed(2)}%`}
+                                      tone={cb.tone}
+                                      tooltip={`${cb.label}\n${cb.benchmark}`} />
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
