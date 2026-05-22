@@ -751,6 +751,11 @@ async def refresh_scored_post_metrics(engine=Depends(get_engine)):
         raise HTTPException(503, "Meta connector not configured")
 
     from app import db as _db
+    from app.seo.post_scorer import _fetch_follower_counts, _enrich_with_reach_penetration
+
+    # Fetch follower counts ONCE for the whole batch
+    follower_counts = await _fetch_follower_counts(engine.meta_social)
+
     posts = await _db.get_scored_posts(limit=500)
     updated, unchanged, failed = 0, 0, 0
     for p in posts:
@@ -767,8 +772,10 @@ async def refresh_scored_post_metrics(engine=Depends(get_engine)):
             old = p.get("metrics") or {}
             # Merge — keep ctr/clicks (paid) if present, overwrite organic
             merged = {**old, **fresh}
-            if merged != old:
-                p["metrics"] = merged
+            p["metrics"] = merged
+            # Enrich with reach penetration + ER significance (uses fresh reach)
+            _enrich_with_reach_penetration(p, follower_counts)
+            if p["metrics"] != old:
                 await _db.save_scored_post(p)
                 updated += 1
             else:
@@ -786,9 +793,55 @@ async def refresh_scored_post_metrics(engine=Depends(get_engine)):
 # ─── Social Post Scoring Rubric (so UI can display weights) ─────────
 
 @router.get("/social/posts/scoring-config")
-async def get_post_scoring_config():
-    """Returns the criteria, weights, and tier thresholds — drives the UI info panel."""
-    from app.seo.post_scorer import SCORING_WEIGHTS, TIER_THRESHOLDS
+async def get_post_scoring_config(engine=Depends(get_engine)):
+    """
+    Returns the criteria, weights, tier thresholds — plus REAL reach-penetration
+    benchmarks calculated from your live FB + IG follower counts so the team
+    sees exactly what reach number a post needs to be statistically meaningful.
+    """
+    from app.seo.post_scorer import SCORING_WEIGHTS, TIER_THRESHOLDS, _fetch_follower_counts
+
+    # Live follower counts + computed reach floors (FB 5%, IG 10% of followers)
+    follower_counts = {"facebook": 0, "instagram": 0}
+    if engine.meta_social:
+        try:
+            follower_counts = await _fetch_follower_counts(engine.meta_social)
+        except Exception:
+            pass
+
+    fb_followers = follower_counts.get("facebook", 0) or 0
+    ig_followers = follower_counts.get("instagram", 0) or 0
+
+    def _calc_thresholds(followers: int, weak_pct: float, ok_pct: float, good_pct: float) -> Dict:
+        """Convert benchmark %s into absolute reach numbers for this page size."""
+        return {
+            "poor": int(followers * weak_pct / 100),
+            "median": int(followers * ok_pct / 100),
+            "good": int(followers * good_pct / 100),
+        }
+
+    reach_benchmarks = {
+        "facebook": {
+            "followers": fb_followers,
+            "image_carousel": _calc_thresholds(fb_followers, 2, 5, 10),
+            "video_reel": _calc_thresholds(fb_followers, 2, 5, 10),  # FB Reels share thresholds
+            "er_significance_floor": int(fb_followers * 0.05),  # reach >= 5% for ER to be meaningful
+            "er_noise_floor": int(fb_followers * 0.025),         # reach < 2.5% is noise
+            "thresholds_pct": "<2% poor · 2-5% median · 5-10% good · >10% excellent",
+            "er_rule": f"ER% is statistically meaningful only when reach ≥ 5% of followers = {int(fb_followers * 0.05):,}",
+        },
+        "instagram": {
+            "followers": ig_followers,
+            "image_carousel": _calc_thresholds(ig_followers, 8, 20, 40),
+            "video_reel": _calc_thresholds(ig_followers, 20, 50, 100),
+            "er_significance_floor": int(ig_followers * 0.10),
+            "er_noise_floor": int(ig_followers * 0.05),
+            "image_thresholds_pct": "<8% poor · 8-20% median · 20-40% good · >40% excellent",
+            "reel_thresholds_pct": "<20% poor · 20-50% median · 50-100% good · >100% excellent (algorithm amplification)",
+            "er_rule": f"ER% is statistically meaningful only when reach ≥ 10% of followers = {int(ig_followers * 0.10):,}",
+        },
+    }
+
     return {
         "criteria": [
             {"key": "hook",    "label": "Hook",    "description": "Attention grab in first 3s / first line",     "weight": SCORING_WEIGHTS["hook"]},
@@ -802,6 +855,7 @@ async def get_post_scoring_config():
         "tier_thresholds": TIER_THRESHOLDS,
         "formula": "overall_score (0-100) = Σ (criterion_score × weight) × 10",
         "context_signals": "Engagement metrics (reach, CTR, engagement rate, CPL) are passed to the AI as context — they influence individual criterion scores but are not a scored criterion themselves.",
+        "reach_benchmarks": reach_benchmarks,
     }
 
 

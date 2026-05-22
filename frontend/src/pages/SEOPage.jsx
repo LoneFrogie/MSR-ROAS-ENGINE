@@ -397,18 +397,38 @@ function MetricChip({ label, value, tone, tooltip }) {
  * Engagement rate benchmarks (2026 data from Rival IQ, Hootsuite, Social Insider).
  * Returns {tone, label} for a given platform/media-type/ER decimal (0–1).
  */
-function erBenchmark(platform, mediaType, erDecimal) {
+function erBenchmark(platform, mediaType, erDecimal, significance) {
   const er = (erDecimal || 0) * 100;  // convert to %
   const isReel = mediaType === 'VIDEO' || mediaType === 'REELS';
 
-  // Thresholds: { weak, ok, good, excellent }
+  // ── Reach-significance gate: ER% is noise when reach is too small ──
+  if (significance === 'noise') {
+    return {
+      tone: 'weak',
+      label: 'NOT MEANINGFUL — reach too low',
+      benchmark: 'Need higher reach before ER% is interpretable',
+      formula: 'ER = (likes + comments + shares + saves) ÷ reach',
+      gated: true,
+    };
+  }
+  if (significance === 'low') {
+    return {
+      tone: 'ok',
+      label: 'Low sample — interpret with caution',
+      benchmark: 'Reach below ER significance floor (FB ≥5% / IG ≥10% of followers)',
+      formula: 'ER = (likes + comments + shares + saves) ÷ reach',
+      gated: true,
+    };
+  }
+
+  // Normal benchmarks
   let thresholds;
   if (platform === 'facebook') {
-    thresholds = [0.05, 0.27, 1.0];   // weak < 0.05% < ok < 0.27% < good < 1% < excellent
+    thresholds = [0.05, 0.27, 1.0];
   } else if (isReel) {
-    thresholds = [1.0, 3.0, 5.0];     // IG Reels
+    thresholds = [1.0, 3.0, 5.0];
   } else {
-    thresholds = [0.5, 1.0, 3.0];     // IG Image/Carousel
+    thresholds = [0.5, 1.0, 3.0];
   }
   const [weakMax, okMax, goodMax] = thresholds;
   const tone = er < weakMax ? 'weak' : er < okMax ? 'ok' : 'good';
@@ -418,6 +438,24 @@ function erBenchmark(platform, mediaType, erDecimal) {
               : 'Excellent — algorithm-favored';
   const benchmark = `Benchmark for ${platform}${isReel ? ' Reel' : ''}: <${weakMax}% poor · ${weakMax}-${okMax}% median · ${okMax}-${goodMax}% good · >${goodMax}% excellent`;
   return { tone, label, benchmark, formula: 'ER = (likes + comments + shares + saves) ÷ reach' };
+}
+
+/** Reach penetration (reach / followers): is the post hitting enough audience? */
+function reachPenetrationBenchmark(platform, mediaType, penetrationPct) {
+  const isReel = mediaType === 'VIDEO' || mediaType === 'REELS';
+  let thresholds;
+  if (platform === 'facebook') thresholds = [2, 5, 10];
+  else if (isReel)             thresholds = [20, 50, 100];
+  else                         thresholds = [8, 20, 40];
+  const [weakMax, okMax, goodMax] = thresholds;
+  const p = penetrationPct || 0;
+  const tone = p < weakMax ? 'weak' : p < okMax ? 'ok' : 'good';
+  const label = p < weakMax ? 'Poor distribution'
+              : p < okMax   ? 'Median distribution'
+              : p < goodMax ? 'Good distribution'
+              : 'Excellent — algorithm amplified';
+  const benchmark = `${platform}${isReel ? ' Reel' : ''} penetration: <${weakMax}% poor · ${weakMax}-${okMax}% median · ${okMax}-${goodMax}% good · >${goodMax}% excellent`;
+  return { tone, label, benchmark };
 }
 
 function ScoringRubricInfo() {
@@ -511,6 +549,78 @@ function ScoringRubricInfo() {
                 <span className="font-semibold text-gray-700 not-italic">Engagement signals:</span>{' '}
                 {config.context_signals}
               </div>
+
+              {/* Reach Penetration Benchmarks — calculated for THIS account */}
+              {config.reach_benchmarks && (
+                <div className="pt-3 border-t border-gray-100">
+                  <div className="font-semibold text-gray-800 mb-1.5">
+                    Reach Penetration — calibrated to your follower base
+                  </div>
+                  <div className="text-[11px] text-gray-600 mb-2">
+                    ER% is only meaningful when reach hits a minimum % of followers
+                    (industry standard). Below the floor, the ER chip is gated to
+                    prevent false positives from internal-network engagement.
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {['facebook', 'instagram'].map(plat => {
+                      const r = config.reach_benchmarks[plat];
+                      if (!r) return null;
+                      const Color = plat === 'facebook' ? 'blue' : 'pink';
+                      return (
+                        <div key={plat} className="bg-gray-50 rounded p-2 border border-gray-100">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-${Color}-100 text-${Color}-700`}>{plat}</span>
+                            <span className="text-[10px] text-gray-500">
+                              {r.followers ? `${r.followers.toLocaleString()} followers` : 'follower count unavailable'}
+                            </span>
+                          </div>
+                          {plat === 'facebook' && r.followers > 0 && (
+                            <table className="w-full text-[10px]">
+                              <tbody>
+                                <tr><td className="py-0.5 text-gray-500">Poor reach (&lt;2%)</td><td className="py-0.5 text-right font-mono text-red-600">&lt; {r.image_carousel.poor.toLocaleString()}</td></tr>
+                                <tr><td className="py-0.5 text-gray-500">Median reach (2-5%)</td><td className="py-0.5 text-right font-mono text-amber-600">{r.image_carousel.poor.toLocaleString()}-{r.image_carousel.median.toLocaleString()}</td></tr>
+                                <tr><td className="py-0.5 text-gray-500">Good reach (5-10%)</td><td className="py-0.5 text-right font-mono text-emerald-600">{r.image_carousel.median.toLocaleString()}-{r.image_carousel.good.toLocaleString()}</td></tr>
+                                <tr><td className="py-0.5 text-gray-500">Excellent (&gt;10%)</td><td className="py-0.5 text-right font-mono text-emerald-700">&gt; {r.image_carousel.good.toLocaleString()}</td></tr>
+                                <tr className="border-t border-gray-200"><td className="py-1 text-violet-700 font-semibold">ER significance floor</td><td className="py-1 text-right font-mono text-violet-700 font-bold">≥ {r.er_significance_floor.toLocaleString()}</td></tr>
+                              </tbody>
+                            </table>
+                          )}
+                          {plat === 'instagram' && r.followers > 0 && (
+                            <>
+                              <div className="text-[10px] font-semibold text-gray-700 mt-1 mb-0.5">Image / Carousel</div>
+                              <table className="w-full text-[10px]">
+                                <tbody>
+                                  <tr><td className="py-0.5 text-gray-500">Poor (&lt;8%)</td><td className="py-0.5 text-right font-mono text-red-600">&lt; {r.image_carousel.poor.toLocaleString()}</td></tr>
+                                  <tr><td className="py-0.5 text-gray-500">Median (8-20%)</td><td className="py-0.5 text-right font-mono text-amber-600">{r.image_carousel.poor.toLocaleString()}-{r.image_carousel.median.toLocaleString()}</td></tr>
+                                  <tr><td className="py-0.5 text-gray-500">Good (20-40%)</td><td className="py-0.5 text-right font-mono text-emerald-600">{r.image_carousel.median.toLocaleString()}-{r.image_carousel.good.toLocaleString()}</td></tr>
+                                  <tr><td className="py-0.5 text-gray-500">Excellent (&gt;40%)</td><td className="py-0.5 text-right font-mono text-emerald-700">&gt; {r.image_carousel.good.toLocaleString()}</td></tr>
+                                </tbody>
+                              </table>
+                              <div className="text-[10px] font-semibold text-gray-700 mt-1.5 mb-0.5">Reel / Video</div>
+                              <table className="w-full text-[10px]">
+                                <tbody>
+                                  <tr><td className="py-0.5 text-gray-500">Poor (&lt;20%)</td><td className="py-0.5 text-right font-mono text-red-600">&lt; {r.video_reel.poor.toLocaleString()}</td></tr>
+                                  <tr><td className="py-0.5 text-gray-500">Median (20-50%)</td><td className="py-0.5 text-right font-mono text-amber-600">{r.video_reel.poor.toLocaleString()}-{r.video_reel.median.toLocaleString()}</td></tr>
+                                  <tr><td className="py-0.5 text-gray-500">Good (50-100%)</td><td className="py-0.5 text-right font-mono text-emerald-600">{r.video_reel.median.toLocaleString()}-{r.video_reel.good.toLocaleString()}</td></tr>
+                                  <tr><td className="py-0.5 text-gray-500">Excellent (&gt;100%)</td><td className="py-0.5 text-right font-mono text-emerald-700">&gt; {r.video_reel.good.toLocaleString()}</td></tr>
+                                </tbody>
+                              </table>
+                              <table className="w-full text-[10px] mt-1 border-t border-gray-200">
+                                <tbody>
+                                  <tr><td className="py-1 text-violet-700 font-semibold">ER significance floor</td><td className="py-1 text-right font-mono text-violet-700 font-bold">≥ {r.er_significance_floor.toLocaleString()}</td></tr>
+                                </tbody>
+                              </table>
+                            </>
+                          )}
+                          {!r.followers && (
+                            <div className="text-[10px] text-gray-500 italic">Follower count not available — connect Meta API</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1470,12 +1580,25 @@ function PostScoring() {
                     <MetricChip label="Shares"      value={(p.metrics?.shares || 0).toLocaleString()} />
                     <MetricChip label="Saves"       value={(p.metrics?.saves || 0).toLocaleString()} />
                     {(() => {
-                      const bm = erBenchmark(p.platform, p.media_type, p.metrics?.engagement_rate || 0);
+                      const sig = p.metrics?.er_significance;
+                      const bm = erBenchmark(p.platform, p.media_type, p.metrics?.engagement_rate || 0, sig);
+                      const display = bm.gated
+                        ? `${((p.metrics?.engagement_rate || 0) * 100).toFixed(1)}% ⚠`
+                        : `${((p.metrics?.engagement_rate || 0) * 100).toFixed(1)}%`;
                       return (
-                        <MetricChip label="ER"
-                                    value={`${((p.metrics?.engagement_rate || 0) * 100).toFixed(1)}%`}
+                        <MetricChip label={bm.gated ? 'ER (gated)' : 'ER'}
+                                    value={display}
                                     tone={bm.tone}
                                     tooltip={`${bm.formula}\n${bm.label}\n${bm.benchmark}`} />
+                      );
+                    })()}
+                    {p.metrics?.reach_penetration_pct != null && (() => {
+                      const rp = reachPenetrationBenchmark(p.platform, p.media_type, p.metrics.reach_penetration_pct);
+                      return (
+                        <MetricChip label="Reach %"
+                                    value={`${p.metrics.reach_penetration_pct.toFixed(1)}%`}
+                                    tone={rp.tone}
+                                    tooltip={`Reach ÷ Followers (${(p.metrics.followers_at_score_time || 0).toLocaleString()})\n${rp.label}\n${rp.benchmark}`} />
                       );
                     })()}
                   </div>

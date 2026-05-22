@@ -330,6 +330,59 @@ OUTPUT (return JSON matching this schema exactly):
         return {"error": str(e)}
 
 
+def _enrich_with_reach_penetration(scored: Dict[str, Any], follower_counts: Dict[str, int]) -> None:
+    """
+    Add reach_penetration_pct + er_significance flag based on follower counts.
+    Industry thresholds:
+      - FB: reach >= 5% of followers for ER to be statistically meaningful
+      - IG: reach >= 10% of followers
+    Below those, ER is mostly internal-staff noise.
+    """
+    metrics = scored.get("metrics") or {}
+    platform = scored.get("platform")
+    followers = follower_counts.get(platform, 0) or 0
+    reach = metrics.get("reach", 0) or 0
+
+    if not followers:
+        metrics["reach_penetration_pct"] = None
+        metrics["er_significance"] = "unknown"
+        metrics["followers_at_score_time"] = 0
+    else:
+        penetration = (reach / followers) if followers else 0
+        metrics["reach_penetration_pct"] = round(penetration * 100, 2)
+        metrics["followers_at_score_time"] = followers
+        # ER significance gate
+        if platform == "facebook":
+            floor = 0.05  # 5% of followers
+        elif platform == "instagram":
+            floor = 0.10  # 10% of followers
+        else:
+            floor = 0.05
+        if penetration < floor * 0.5:
+            metrics["er_significance"] = "noise"  # very low — internal-only likely
+        elif penetration < floor:
+            metrics["er_significance"] = "low"    # below threshold — interpret cautiously
+        else:
+            metrics["er_significance"] = "normal" # above threshold — ER% meaningful
+    scored["metrics"] = metrics
+
+
+async def _fetch_follower_counts(meta_social) -> Dict[str, int]:
+    """Get current FB + IG follower counts (used to compute reach penetration)."""
+    counts = {"facebook": 0, "instagram": 0}
+    try:
+        fb = await meta_social.get_page_overview()
+        counts["facebook"] = int(fb.get("followers") or fb.get("fan_count") or 0)
+    except Exception as e:
+        logger.debug(f"FB follower fetch failed: {e}")
+    try:
+        ig = await meta_social.get_instagram_overview()
+        counts["instagram"] = int(ig.get("followers") or 0)
+    except Exception as e:
+        logger.debug(f"IG follower fetch failed: {e}")
+    return counts
+
+
 async def score_recent_posts(
     meta_social,
     max_posts: int = 10,
@@ -343,6 +396,9 @@ async def score_recent_posts(
     Already-scored posts are loaded from Firestore and not re-scored.
     """
     from app import db as _db
+
+    # 0) Fetch current follower counts (used for reach-penetration significance)
+    follower_counts = await _fetch_follower_counts(meta_social)
 
     # 1) Load already-scored posts in this range from Firestore
     existing = await _db.get_scored_posts(limit=500, start_date=start_date, end_date=end_date)
@@ -383,6 +439,7 @@ async def score_recent_posts(
     for p in in_range:
         scored = await score_post(p)
         if "error" not in scored:
+            _enrich_with_reach_penetration(scored, follower_counts)
             # Try to attach a matching pre-score draft (caption-hash lookup)
             try:
                 pre = await _find_matching_draft(scored.get("caption", ""))
