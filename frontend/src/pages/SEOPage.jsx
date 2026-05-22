@@ -397,18 +397,31 @@ function MetricChip({ label, value, tone, tooltip }) {
  * Engagement rate benchmarks (2026 data from Rival IQ, Hootsuite, Social Insider).
  * Returns {tone, label} for a given platform/media-type/ER decimal (0–1).
  */
+// ─── Fashion-vertical benchmark sources ─────────────────────────────
+const FASHION_ER_SOURCE = {
+  url: 'https://www.rivaliq.com/blog/social-media-industry-benchmark-report/',
+  label: 'Rival IQ 2025 — Fashion vertical',
+};
+const FASHION_REACH_SOURCE = {
+  url: 'https://blog.hootsuite.com/instagram-statistics/',
+  label: 'Hootsuite — Instagram organic reach benchmarks',
+};
+const PAID_CTR_SOURCE = {
+  url: 'https://www.wordstream.com/blog/ws/2024/03/05/facebook-ads-benchmarks',
+  label: 'WordStream — Facebook + IG Apparel CTR benchmarks',
+};
+
 function erBenchmark(platform, mediaType, erDecimal, significance) {
-  const er = (erDecimal || 0) * 100;  // convert to %
+  const er = (erDecimal || 0) * 100;
   const isReel = mediaType === 'VIDEO' || mediaType === 'REELS';
 
-  // ── Reach-significance gate: ER% is noise when reach is too small ──
   if (significance === 'noise') {
     return {
       tone: 'weak',
       label: 'NOT MEANINGFUL — reach too low',
       benchmark: 'Need higher reach before ER% is interpretable',
       formula: 'ER = (likes + comments + shares + saves) ÷ reach',
-      gated: true,
+      gated: true, source: FASHION_ER_SOURCE,
     };
   }
   if (significance === 'low') {
@@ -417,27 +430,24 @@ function erBenchmark(platform, mediaType, erDecimal, significance) {
       label: 'Low sample — interpret with caution',
       benchmark: 'Reach below ER significance floor (FB ≥5% / IG ≥10% of followers)',
       formula: 'ER = (likes + comments + shares + saves) ÷ reach',
-      gated: true,
+      gated: true, source: FASHION_ER_SOURCE,
     };
   }
 
-  // Normal benchmarks
+  // Fashion-vertical (Rival IQ 2025 Fashion):
+  // IG image median 0.68% · IG Reels median 2.0% · FB median 0.04% · TikTok median 2.5%
   let thresholds;
-  if (platform === 'facebook') {
-    thresholds = [0.05, 0.27, 1.0];
-  } else if (isReel) {
-    thresholds = [1.0, 3.0, 5.0];
-  } else {
-    thresholds = [0.5, 1.0, 3.0];
-  }
+  if (platform === 'facebook')      thresholds = [0.04, 0.15, 0.5];   // Fashion FB
+  else if (isReel)                  thresholds = [2.0, 4.0, 7.0];     // Fashion IG Reels
+  else                              thresholds = [0.68, 1.5, 3.0];    // Fashion IG image/carousel
   const [weakMax, okMax, goodMax] = thresholds;
   const tone = er < weakMax ? 'weak' : er < okMax ? 'ok' : 'good';
-  const label = er < weakMax ? 'Below industry median'
-              : er < okMax   ? 'On par with industry median'
-              : er < goodMax ? 'Above median (healthy)'
-              : 'Excellent — algorithm-favored';
-  const benchmark = `Benchmark for ${platform}${isReel ? ' Reel' : ''}: <${weakMax}% poor · ${weakMax}-${okMax}% median · ${okMax}-${goodMax}% good · >${goodMax}% excellent`;
-  return { tone, label, benchmark, formula: 'ER = (likes + comments + shares + saves) ÷ reach' };
+  const label = er < weakMax ? 'Below Fashion median'
+              : er < okMax   ? 'At Fashion median'
+              : er < goodMax ? 'Top quartile in Fashion'
+              : 'Top 10% in Fashion';
+  const benchmark = `Fashion ${platform}${isReel ? ' Reels' : ''}: <${weakMax}% weak · ${weakMax}–${okMax}% median · ${okMax}–${goodMax}% top quartile · >${goodMax}% top 10%`;
+  return { tone, label, benchmark, formula: 'ER = (likes + comments + shares + saves) ÷ reach', source: FASHION_ER_SOURCE };
 }
 
 /** View-through rate benchmark (views / reach). Only meaningful for video. */
@@ -446,35 +456,32 @@ function viewThroughBenchmark(platform, mediaType, views, reach) {
   const isVideo = mediaType === 'VIDEO' || mediaType === 'REELS';
   if (!isVideo) return { tone: 'neutral', label: '', benchmark: '' };
   const vtr = views / reach;
-  // For Reels, views > reach means non-follower amplification (good)
-  // <50%: weak, 50-100%: ok, >100%: good (algo boost)
   const tone = vtr < 0.5 ? 'weak' : vtr < 1.0 ? 'ok' : 'good';
   const label = vtr < 0.5 ? 'Most viewers skipped'
               : vtr < 1.0 ? 'Half-watched'
               : 'Algorithm pushed beyond your audience';
-  return { tone, label, benchmark: `Views ÷ Reach: <50% weak · 50-100% ok · >100% excellent` };
+  return { tone, label, benchmark: 'Views ÷ Reach: <50% weak · 50-100% ok · >100% excellent (non-follower amplification)', source: FASHION_ER_SOURCE };
 }
 
-/** CTR benchmark. */
+/** CTR benchmark — fashion/apparel ad CTR (WordStream 2024 Apparel data). */
 function ctrBenchmark(platform, ctrDecimal) {
   const ctr = (ctrDecimal || 0) * 100;
-  // 2026 industry data
-  const [weakMax, okMax, goodMax] = platform === 'facebook' ? [0.5, 1.0, 2.0] : [0.5, 1.0, 2.0];
+  // Apparel CTR: FB ~1.24% median (WordStream), IG ~0.5-1% median
+  const [weakMax, okMax, goodMax] = platform === 'facebook' ? [0.5, 1.24, 2.5] : [0.5, 1.0, 2.0];
   const tone = ctr < weakMax ? 'weak' : ctr < okMax ? 'ok' : 'good';
-  const label = ctr < weakMax ? 'Below industry CTR'
-              : ctr < okMax   ? 'Median CTR'
-              : ctr < goodMax ? 'Good CTR'
-              : 'Excellent CTR';
-  return { tone, label, benchmark: `CTR: <${weakMax}% weak · ${weakMax}-${okMax}% median · ${okMax}-${goodMax}% good · >${goodMax}% excellent` };
+  const label = ctr < weakMax ? 'Below Apparel CTR median'
+              : ctr < okMax   ? 'At Apparel CTR median'
+              : ctr < goodMax ? 'Above Apparel median'
+              : 'Excellent — top quartile Apparel';
+  return { tone, label, benchmark: `Apparel CTR: <${weakMax}% weak · ${weakMax}–${okMax}% median · ${okMax}–${goodMax}% good · >${goodMax}% excellent`, source: PAID_CTR_SOURCE };
 }
 
 /** Engagement-count benchmark: scaled to follower base. */
 function engagementCountBenchmark(metric, count, followers) {
   if (!followers) return { tone: 'neutral', label: '', benchmark: '' };
   const rate = count / followers;
-  // Per-metric thresholds as % of followers
   const thresholds = {
-    likes:    [0.001, 0.005, 0.02],  // 0.1% / 0.5% / 2%
+    likes:    [0.001, 0.005, 0.02],
     comments: [0.0001, 0.0005, 0.002],
     shares:   [0.0001, 0.0005, 0.002],
     saves:    [0.0001, 0.0005, 0.002],
@@ -484,17 +491,19 @@ function engagementCountBenchmark(metric, count, followers) {
   return {
     tone,
     label: rate < weakMax ? 'Low' : rate < okMax ? 'Median' : rate < goodMax ? 'Good' : 'Excellent',
-    benchmark: `${metric} ÷ followers: <${(weakMax*100).toFixed(2)}% weak · ${(okMax*100).toFixed(2)}-${(goodMax*100).toFixed(2)}% good`,
+    benchmark: `Fashion ${metric} ÷ followers: <${(weakMax*100).toFixed(2)}% weak · ${(okMax*100).toFixed(2)}–${(goodMax*100).toFixed(2)}% good`,
+    source: FASHION_ER_SOURCE,
   };
 }
 
-/** Reach penetration (reach / followers): is the post hitting enough audience? */
+/** Reach penetration (reach / followers). */
 function reachPenetrationBenchmark(platform, mediaType, penetrationPct) {
   const isReel = mediaType === 'VIDEO' || mediaType === 'REELS';
+  // Fashion IG organic reach trends slightly higher than cross-industry (~10-20% vs 8-15%)
   let thresholds;
-  if (platform === 'facebook') thresholds = [2, 5, 10];
-  else if (isReel)             thresholds = [20, 50, 100];
-  else                         thresholds = [8, 20, 40];
+  if (platform === 'facebook') thresholds = [2, 5, 10];      // FB organic, post-algo
+  else if (isReel)             thresholds = [20, 50, 100];   // IG Reels amplification
+  else                         thresholds = [10, 20, 40];    // Fashion IG image/carousel
   const [weakMax, okMax, goodMax] = thresholds;
   const p = penetrationPct || 0;
   const tone = p < weakMax ? 'weak' : p < okMax ? 'ok' : 'good';
@@ -502,8 +511,8 @@ function reachPenetrationBenchmark(platform, mediaType, penetrationPct) {
               : p < okMax   ? 'Median distribution'
               : p < goodMax ? 'Good distribution'
               : 'Excellent — algorithm amplified';
-  const benchmark = `${platform}${isReel ? ' Reel' : ''} penetration: <${weakMax}% poor · ${weakMax}-${okMax}% median · ${okMax}-${goodMax}% good · >${goodMax}% excellent`;
-  return { tone, label, benchmark };
+  const benchmark = `Fashion ${platform}${isReel ? ' Reels' : ''} penetration: <${weakMax}% poor · ${weakMax}–${okMax}% median · ${okMax}–${goodMax}% good · >${goodMax}% excellent`;
+  return { tone, label, benchmark, source: FASHION_REACH_SOURCE };
 }
 
 function ScoringRubricInfo() {
@@ -669,6 +678,32 @@ function ScoringRubricInfo() {
                   </div>
                 </div>
               )}
+
+              {/* Sources — all benchmark references, hyperlinked */}
+              <div className="pt-3 border-t border-gray-100">
+                <div className="font-semibold text-gray-800 mb-1.5">Benchmark sources (Fashion vertical)</div>
+                <ul className="text-[11px] text-gray-600 space-y-1 list-disc ml-4">
+                  <li>
+                    Engagement rates by platform —{' '}
+                    <a href={FASHION_ER_SOURCE.url} target="_blank" rel="noopener noreferrer"
+                       className="text-cyan-700 hover:underline">{FASHION_ER_SOURCE.label} ↗</a>
+                    {' '}<span className="text-gray-500">(Fashion median IG image 0.68%, IG Reels 2.0%, FB 0.04%, TikTok 2.5%)</span>
+                  </li>
+                  <li>
+                    Reach penetration thresholds —{' '}
+                    <a href={FASHION_REACH_SOURCE.url} target="_blank" rel="noopener noreferrer"
+                       className="text-cyan-700 hover:underline">{FASHION_REACH_SOURCE.label} ↗</a>
+                  </li>
+                  <li>
+                    Paid CTR (Apparel vertical) —{' '}
+                    <a href={PAID_CTR_SOURCE.url} target="_blank" rel="noopener noreferrer"
+                       className="text-cyan-700 hover:underline">{PAID_CTR_SOURCE.label} ↗</a>
+                  </li>
+                </ul>
+                <div className="text-[10px] text-gray-500 italic mt-2">
+                  Thresholds last reviewed against published reports. If your sub-niche (e.g. modest fashion, plus-size, ethnic wear) shows different baseline behavior, we can recalibrate the thresholds from your own historical posts.
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -1628,11 +1663,11 @@ function PostScoring() {
                           <MetricChip label="Reach"
                                       value={(p.metrics?.reach || 0).toLocaleString()}
                                       tone={rp?.tone}
-                                      tooltip={rp ? `${rp.label}\n${rp.benchmark}` : undefined} />
+                                      tooltip={rp ? `${rp.label}\n${rp.benchmark}\nSource: ${rp.source?.label || ''}` : undefined} />
                           <MetricChip label="Impressions"
                                       value={(p.metrics?.impressions || 0).toLocaleString()}
                                       tone={rp?.tone}
-                                      tooltip={rp ? `Note: FB v22 returns reach as impressions.\n${rp.label}\n${rp.benchmark}` : undefined} />
+                                      tooltip={rp ? `Note: FB v22 returns reach as impressions.\n${rp.label}\n${rp.benchmark}\nSource: ${rp.source?.label || ''}` : undefined} />
                         </>
                       );
                     })()}
@@ -1672,7 +1707,7 @@ function PostScoring() {
                         <MetricChip label={bm.gated ? 'ER (gated)' : 'ER'}
                                     value={display}
                                     tone={bm.tone}
-                                    tooltip={`${bm.formula}\n${bm.label}\n${bm.benchmark}`} />
+                                    tooltip={`${bm.formula}\n${bm.label}\n${bm.benchmark}\nSource: ${bm.source?.label || ''}`} />
                       );
                     })()}
                     {p.metrics?.reach_penetration_pct != null && (() => {
