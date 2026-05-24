@@ -43,15 +43,20 @@ export const adaptTrendToBrand = (trend, opts = {}) =>
 export const listDraftScores = (startDate = null, endDate = null) =>
   api.get('/social/posts/drafts', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data);
 export const getPredictionAccuracy = () => api.get('/social/posts/prediction-accuracy').then(r => r.data);
-export const scoreDraftPost = (caption, platform, mediaType, file) => {
+export const scoreDraftPost = (caption, platform, mediaType, filesOrFile) => {
   const form = new FormData();
   form.append('caption', caption || '');
   form.append('platform', platform || 'instagram');
   form.append('media_type', mediaType || 'IMAGE');
-  if (file) form.append('file', file);
+  // Accept either a single File (legacy) or an array of Files (carousel up to 20)
+  if (Array.isArray(filesOrFile)) {
+    filesOrFile.forEach(f => form.append('files', f));
+  } else if (filesOrFile) {
+    form.append('file', filesOrFile);
+  }
   return api.post('/social/posts/score-draft', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 180000,  // Gemini multimodal can take 60-90s for video
+    timeout: 240000,  // Gemini multimodal up to 4 min for carousel
   }).then(r => r.data);
 };
 export const getPendingSeoSuggestions = () =>

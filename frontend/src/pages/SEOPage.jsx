@@ -809,11 +809,12 @@ function PrePostScoring() {
   const [caption, setCaption] = useState('');
   const [platform, setPlatform] = useState('instagram');
   const [mediaType, setMediaType] = useState('IMAGE');
-  const [file, setFile] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState(null);
+  const [files, setFiles] = useState([]);          // array of File objects
+  const [previewUrls, setPreviewUrls] = useState([]); // matching object URLs
   const [scoring, setScoring] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const MAX_FILES = 20;
 
   // ── History view ──
   const today = new Date().toISOString().split('T')[0];
@@ -844,20 +845,39 @@ function PrePostScoring() {
     D: 'bg-red-100 text-red-700',
   }[t] || 'bg-gray-100 text-gray-600');
 
-  const onFile = (e) => {
-    const f = e.target.files?.[0] || null;
-    setFile(f);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(f ? URL.createObjectURL(f) : null);
+  const onFiles = (e) => {
+    const incoming = Array.from(e.target.files || []);
+    if (!incoming.length) return;
+    // Append to existing (so user can add in multiple drags) and cap at 20
+    const merged = [...files, ...incoming].slice(0, MAX_FILES);
+    setFiles(merged);
+    // Revoke previous URLs, build new
+    previewUrls.forEach(u => URL.revokeObjectURL(u));
+    setPreviewUrls(merged.map(f => URL.createObjectURL(f)));
     // Auto-detect media type
-    if (f) {
-      if (f.type.startsWith('video/')) setMediaType('VIDEO');
-      else if (f.type.startsWith('image/')) setMediaType('IMAGE');
+    if (merged.length === 0) return;
+    if (merged.length >= 2) setMediaType('CAROUSEL_ALBUM');
+    else if (merged[0].type.startsWith('video/')) setMediaType('VIDEO');
+    else if (merged[0].type.startsWith('image/')) setMediaType('IMAGE');
+    // Reset input so the same file can be re-selected
+    if (e.target) e.target.value = '';
+  };
+
+  const removeFile = (idx) => {
+    const newFiles = files.filter((_, i) => i !== idx);
+    URL.revokeObjectURL(previewUrls[idx]);
+    setFiles(newFiles);
+    setPreviewUrls(previewUrls.filter((_, i) => i !== idx));
+    if (newFiles.length === 0) {
+      // Reset to single-IMAGE default
+      setMediaType('IMAGE');
+    } else if (newFiles.length === 1) {
+      setMediaType(newFiles[0].type.startsWith('video/') ? 'VIDEO' : 'IMAGE');
     }
   };
 
   const handleScore = async () => {
-    if (!caption.trim() && !file) {
+    if (!caption.trim() && files.length === 0) {
       setError('Add a caption or upload media to score');
       return;
     }
@@ -865,7 +885,9 @@ function PrePostScoring() {
     setError(null);
     setResult(null);
     try {
-      const r = await scoreDraftPost(caption, platform, mediaType, file);
+      // Pass array if 2+ files, single file otherwise (back-compat)
+      const payload = files.length > 1 ? files : (files[0] || null);
+      const r = await scoreDraftPost(caption, platform, mediaType, payload);
       setResult(r);
     } catch (e) {
       setError(e.response?.data?.detail || e.message || 'Scoring failed');
@@ -934,21 +956,42 @@ function PrePostScoring() {
 
         <div>
           <label className="text-xs font-semibold text-gray-700 block mb-1">
-            Upload Image or Video <span className="text-gray-400 font-normal">(optional, ≤20MB)</span>
+            Upload Image(s) or Video <span className="text-gray-400 font-normal">
+              (optional, ≤20MB each, up to {MAX_FILES} files for IG carousel — current: {files.length}/{MAX_FILES})
+            </span>
           </label>
           <input
             type="file"
             accept="image/*,video/*"
-            onChange={onFile}
-            className="block w-full text-xs file:mr-3 file:px-3 file:py-1.5 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-violet-100 file:text-violet-700 hover:file:bg-violet-200"
+            multiple
+            onChange={onFiles}
+            disabled={files.length >= MAX_FILES}
+            className="block w-full text-xs file:mr-3 file:px-3 file:py-1.5 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-violet-100 file:text-violet-700 hover:file:bg-violet-200 disabled:opacity-50"
           />
-          {previewUrl && (
-            <div className="mt-2">
-              {file?.type.startsWith('video/') ? (
-                <video src={previewUrl} controls className="max-h-48 rounded border border-gray-100" />
-              ) : (
-                <img src={previewUrl} alt="" className="max-h-48 rounded border border-gray-100" />
-              )}
+          {files.length > 0 && (
+            <div className="mt-2 grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-2">
+              {files.map((f, idx) => (
+                <div key={idx} className="relative group">
+                  <div className="absolute top-1 left-1 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded font-bold z-10">
+                    {idx + 1}
+                  </div>
+                  <button
+                    onClick={() => removeFile(idx)}
+                    className="absolute top-1 right-1 bg-red-600 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center opacity-80 hover:opacity-100 z-10"
+                    title="Remove this slide"
+                  >×</button>
+                  {f.type.startsWith('video/') ? (
+                    <video src={previewUrls[idx]} className="w-full aspect-square object-cover rounded border border-gray-200" />
+                  ) : (
+                    <img src={previewUrls[idx]} alt={`slide ${idx+1}`} className="w-full aspect-square object-cover rounded border border-gray-200" />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {files.length > 1 && (
+            <div className="text-[11px] text-violet-700 mt-2">
+              Carousel mode: slide 1 is the cover/hook (most important for stop rate). Gemini will analyze swipe-through coherence.
             </div>
           )}
         </div>
@@ -971,12 +1014,17 @@ function PrePostScoring() {
       {result && (
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="flex gap-4">
-            {previewUrl && (
-              <div className="shrink-0">
-                {file?.type.startsWith('video/') ? (
-                  <video src={previewUrl} className="w-24 h-24 object-cover rounded-lg border border-gray-100" />
+            {previewUrls.length > 0 && (
+              <div className="shrink-0 relative">
+                {files[0]?.type.startsWith('video/') ? (
+                  <video src={previewUrls[0]} className="w-24 h-24 object-cover rounded-lg border border-gray-100" />
                 ) : (
-                  <img src={previewUrl} alt="" className="w-24 h-24 object-cover rounded-lg border border-gray-100" />
+                  <img src={previewUrls[0]} alt="" className="w-24 h-24 object-cover rounded-lg border border-gray-100" />
+                )}
+                {files.length > 1 && (
+                  <div className="absolute -top-1 -right-1 bg-violet-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                    +{files.length - 1}
+                  </div>
                 )}
               </div>
             )}

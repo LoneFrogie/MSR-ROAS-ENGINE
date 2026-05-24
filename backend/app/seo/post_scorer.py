@@ -247,10 +247,13 @@ async def score_draft_post(
     media_type: str = "IMAGE",
     media_bytes: Optional[bytes] = None,
     media_mime: Optional[str] = None,
+    media_files: Optional[List[tuple]] = None,
 ) -> Dict[str, Any]:
     """
     Score a DRAFT post (not yet published) using the same rubric as live posts.
-    Accepts raw bytes for image/video so Gemini can analyze the visual directly.
+
+    Single-file (backward compat): pass media_bytes + media_mime.
+    Carousel (up to 20): pass media_files as list of (bytes, mime_type) tuples.
     Returns scoring + suggested rewrites (same schema as score_post).
     """
     _configure()
@@ -287,7 +290,11 @@ DRAFT POST:
     "caption": (caption or "")[:1500],
 }, indent=2)}
 
-{"The image/video is attached. Analyze it for: composition, lighting, brand presence, on-platform mobile framing, hook strength (first frame), and pacing if video." if media_bytes else "No media uploaded — score visual/pacing as 5 (neutral baseline) and weight the analysis on caption + message."}
+{
+  (f"The {len(media_files)} carousel slides are attached in order (slide 1 = cover/hook). Analyze: (1) cover slide's hook strength — first frame decides 70%+ of stop rate, (2) consistency across slides (theme, palette, brand), (3) progression / payoff in last slide, (4) why a viewer would swipe through all of them. Score 'pacing' on slide sequencing." if (media_files and len(media_files) > 1) else
+   "The image/video is attached. Analyze it for: composition, lighting, brand presence, on-platform mobile framing, hook strength (first frame), and pacing if video." if (media_bytes or media_files)
+   else "No media uploaded — score visual/pacing as 5 (neutral baseline) and weight the analysis on caption + message.")
+}
 
 OUTPUT (return JSON matching this schema exactly):
 {json.dumps(schema, indent=2)}
@@ -303,14 +310,15 @@ OUTPUT (return JSON matching this schema exactly):
             },
         )
 
-        # Build Gemini input: text + optional inline media
-        if media_bytes and media_mime:
-            inputs = [
-                {"mime_type": media_mime, "data": media_bytes},
-                prompt,
-            ]
-        else:
-            inputs = [prompt]
+        # Build Gemini input: each slide in order, then the text prompt
+        inputs = []
+        if media_files:
+            for (b, mime) in media_files:
+                if b and mime:
+                    inputs.append({"mime_type": mime, "data": b})
+        elif media_bytes and media_mime:
+            inputs.append({"mime_type": media_mime, "data": media_bytes})
+        inputs.append(prompt)
 
         resp = await model.generate_content_async(inputs)
         result = json.loads(resp.text.strip())

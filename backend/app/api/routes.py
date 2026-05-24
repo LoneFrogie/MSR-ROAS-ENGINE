@@ -479,34 +479,54 @@ async def score_draft_post_endpoint(
     platform: str = Form("instagram"),
     media_type: str = Form("IMAGE"),
     file: Optional[UploadFile] = File(None),
+    files: List[UploadFile] = File(default=[]),
 ):
     """
-    Score a pre-post draft (caption + optional image/video) on the same
+    Score a pre-post draft (caption + optional image/video/carousel) on the same
     7-criteria rubric used for live posts. No persistence — returns the
     score + suggestions only.
 
-    Limits: file ≤ 20MB. Allowed types: image/* and video/*.
+    Limits: each file ≤ 20MB. Up to 20 files (Instagram carousel max). Allowed
+    types: image/* and video/*.
+
+    Multi-file uploads are sent as the form field `files` (repeated). The legacy
+    single-file field `file` is still accepted for backward compatibility.
     """
     from app.seo.post_scorer import score_draft_post
 
-    media_bytes = None
-    media_mime = None
-    if file is not None:
-        # Cap file size to avoid runaway memory + Gemini limits
-        MAX_BYTES = 20 * 1024 * 1024
-        media_bytes = await file.read()
-        if len(media_bytes) > MAX_BYTES:
-            raise HTTPException(413, f"File too large: {len(media_bytes)} bytes > 20MB cap")
-        media_mime = file.content_type or "application/octet-stream"
-        if not (media_mime.startswith("image/") or media_mime.startswith("video/")):
-            raise HTTPException(415, f"Unsupported media type: {media_mime}")
+    MAX_BYTES = 20 * 1024 * 1024
+    MAX_FILES = 20
+
+    # Collect all uploaded files (multi-file `files` takes precedence; fall back to `file`)
+    candidates = [f for f in (files or []) if f is not None] or ([file] if file else [])
+    if len(candidates) > MAX_FILES:
+        raise HTTPException(413, f"Too many files: {len(candidates)}. Max {MAX_FILES} (Instagram carousel limit).")
+
+    media_files: List[tuple] = []
+    for f in candidates:
+        b = await f.read()
+        if len(b) > MAX_BYTES:
+            raise HTTPException(413, f"File '{f.filename}' too large: {len(b)} bytes > 20MB cap")
+        mime = f.content_type or "application/octet-stream"
+        if not (mime.startswith("image/") or mime.startswith("video/")):
+            raise HTTPException(415, f"Unsupported media type for '{f.filename}': {mime}")
+        media_files.append((b, mime))
+
+    # Auto-promote media_type to CAROUSEL_ALBUM if 2+ files
+    if len(media_files) > 1 and media_type in ("IMAGE", "VIDEO"):
+        media_type = "CAROUSEL_ALBUM"
+
+    # Back-compat single-file shape for downstream code
+    legacy_bytes = media_files[0][0] if (len(media_files) == 1) else None
+    legacy_mime  = media_files[0][1] if (len(media_files) == 1) else None
 
     result = await score_draft_post(
         caption=caption,
         platform=platform,
         media_type=media_type,
-        media_bytes=media_bytes,
-        media_mime=media_mime,
+        media_bytes=legacy_bytes,
+        media_mime=legacy_mime,
+        media_files=media_files if len(media_files) > 1 else None,
     )
     if "error" in result:
         raise HTTPException(500, result["error"])
