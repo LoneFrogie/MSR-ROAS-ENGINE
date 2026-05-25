@@ -707,6 +707,11 @@ function ScoringRubricInfo() {
               {/* What each metric chip measures + how it's color-graded */}
               <div className="pt-3 border-t border-gray-100">
                 <div className="font-semibold text-gray-800 mb-1.5">What each metric chip means</div>
+                <div className="bg-blue-50 border border-blue-100 rounded p-2 text-[11px] text-blue-900 mb-2">
+                  <b>Why there's no Impressions chip:</b> Meta deprecated the public <code>post_impressions</code> field
+                  for organic posts in Graph API v22. Only <i>reach</i> (unique users) is exposed now.
+                  Showing both would duplicate the same number. Use Reach + Reach % for distribution; Views for video.
+                </div>
                 <div className="border border-gray-100 rounded overflow-hidden">
                   <table className="w-full text-[11px]">
                     <thead className="bg-gray-50 text-gray-600">
@@ -726,11 +731,6 @@ function ScoringRubricInfo() {
                         <td className="px-2 py-1.5 font-semibold text-gray-800">Reach %</td>
                         <td className="px-2 py-1.5 text-gray-600">reach ÷ followers (audience penetration)</td>
                         <td className="px-2 py-1.5 text-gray-600">FB: &lt;2/5/10% · IG image: &lt;10/20/40% · Reels: &lt;20/50/100%</td>
-                      </tr>
-                      <tr className="border-t border-gray-100">
-                        <td className="px-2 py-1.5 font-semibold text-gray-800">Impressions</td>
-                        <td className="px-2 py-1.5 text-gray-600">Total times shown (FB v22 = same as reach)</td>
-                        <td className="px-2 py-1.5 text-gray-600">Same as Reach</td>
                       </tr>
                       <tr className="border-t border-gray-100 bg-gray-50">
                         <td className="px-2 py-1.5 font-semibold text-gray-800">Views</td>
@@ -1798,16 +1798,10 @@ function PostScoring() {
                       const pen = p.metrics?.reach_penetration_pct;
                       const rp = pen != null ? reachPenetrationBenchmark(p.platform, p.media_type, pen) : null;
                       return (
-                        <>
-                          <MetricChip label="Reach"
-                                      value={(p.metrics?.reach || 0).toLocaleString()}
-                                      tone={rp?.tone}
-                                      tooltip={rp ? `${rp.label}\n${rp.benchmark}\nSource: ${rp.source?.label || ''}` : undefined} />
-                          <MetricChip label="Impressions"
-                                      value={(p.metrics?.impressions || 0).toLocaleString()}
-                                      tone={rp?.tone}
-                                      tooltip={rp ? `Note: FB v22 returns reach as impressions.\n${rp.label}\n${rp.benchmark}\nSource: ${rp.source?.label || ''}` : undefined} />
-                        </>
+                        <MetricChip label="Reach"
+                                    value={(p.metrics?.reach || 0).toLocaleString()}
+                                    tone={rp?.tone}
+                                    tooltip={rp ? `${rp.label}\n${rp.benchmark}\nSource: ${rp.source?.label || ''}` : undefined} />
                       );
                     })()}
                     {(() => {
