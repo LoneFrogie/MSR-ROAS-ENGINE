@@ -163,6 +163,33 @@ def _enrich_with_paid_metrics(post: Dict, paid_lookup: Optional[Dict] = None) ->
     return metrics
 
 
+async def _fetch_media_bytes(url: Optional[str], cap_mb: int = 18) -> tuple:
+    """
+    Download a Meta CDN image/video URL → (bytes, mime).
+    Returns (None, None) on any failure. Capped to cap_mb to fit Gemini limits.
+    """
+    if not url:
+        return (None, None)
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as c:
+            r = await c.get(url)
+            if r.status_code != 200:
+                return (None, None)
+            data = r.content
+            if len(data) > cap_mb * 1024 * 1024:
+                # Too big for inline Gemini — skip rather than truncate (would corrupt media)
+                logger.debug(f"Media {len(data)} bytes exceeds {cap_mb}MB cap, skipping bytes pass")
+                return (None, None)
+            mime = r.headers.get("content-type", "").split(";")[0].strip() or "application/octet-stream"
+            if not (mime.startswith("image/") or mime.startswith("video/")):
+                return (None, None)
+            return (data, mime)
+    except Exception as e:
+        logger.debug(f"Media fetch failed: {e}")
+        return (None, None)
+
+
 async def score_post(post: Dict[str, Any], paid_metrics: Optional[Dict] = None) -> Dict[str, Any]:
     """Score a single post. Returns scored object with rationale + recommendations."""
     _configure()
@@ -170,6 +197,12 @@ async def score_post(post: Dict[str, Any], paid_metrics: Optional[Dict] = None) 
         return {"error": "GEMINI_API_KEY not configured", "post_id": post.get("id")}
 
     metrics = _enrich_with_paid_metrics(post, paid_metrics)
+
+    # Download the actual media so Gemini can do real visual analysis (closes the
+    # pre-vs-actual visual-score gap). Falls back to text-only if download fails.
+    media_url = post.get("media_url") or post.get("thumbnail_url")
+    media_bytes, media_mime = await _fetch_media_bytes(media_url)
+    has_visual = bool(media_bytes and media_mime)
 
     schema = {
         "scores": {
@@ -200,9 +233,9 @@ POST DATA:
     "media_type": post.get("media_type"),
     "caption": (post.get("message") or "")[:1500],
     "permalink": post.get("permalink_url"),
-    "media_url": post.get("media_url"),
-    "thumbnail_url": post.get("thumbnail_url"),
 }, indent=2, default=str)}
+
+{"The actual image/video is attached. Use it for visual / brand / mobile / pacing scoring. Do real pixel-level analysis — composition, lighting, brand presence, mobile-safe framing, edit rhythm." if has_visual else "Note: media bytes could not be fetched (URL expired or too large). Score visual/pacing/brand from caption + media_type only; mark these criteria around 5 (neutral) unless caption strongly hints otherwise."}
 
 PERFORMANCE METRICS:
 {json.dumps(metrics, indent=2)}
@@ -217,10 +250,15 @@ OUTPUT (return JSON matching this schema exactly):
             system_instruction=SYSTEM_PROMPT,
             generation_config={
                 "response_mime_type": "application/json",
-                "temperature": 0.5,
+                "temperature": 0.4,  # Aligned with score_draft_post for fair pre/actual comparison
             },
         )
-        resp = await model.generate_content_async(prompt)
+        # Build multimodal input: attached media bytes first, then prompt
+        if has_visual:
+            inputs = [{"mime_type": media_mime, "data": media_bytes}, prompt]
+        else:
+            inputs = [prompt]
+        resp = await model.generate_content_async(inputs)
         result = json.loads(resp.text.strip())
         # Override Gemini's fuzzy overall + tier with deterministic weighted math
         sub = result.get("scores", {}) or {}
@@ -235,6 +273,7 @@ OUTPUT (return JSON matching this schema exactly):
         result["caption"] = (post.get("message") or "")[:500]  # Original caption shown in UI
         result["media_type"] = post.get("media_type")
         result["metrics"] = metrics
+        result["visual_analysis_used"] = has_visual  # transparency: did Gemini actually see the media?
         return result
     except Exception as e:
         logger.error(f"Post scoring failed for {post.get('id')}: {e}")
