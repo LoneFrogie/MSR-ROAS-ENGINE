@@ -769,6 +769,55 @@ function ScoringRubricInfo() {
                 </div>
               </div>
 
+              {/* Pre-score vs Live-score gap explanation */}
+              <div className="pt-3 border-t border-gray-100">
+                <div className="font-semibold text-gray-800 mb-1.5">Why Pre-Post and Live scores can differ</div>
+                <p className="text-[11px] text-gray-600 mb-2">
+                  A pre-score and a live score on the same content often don't match exactly. The gap
+                  is meaningful — it's how the system learns over time. Three causes:
+                </p>
+                <div className="border border-gray-100 rounded overflow-hidden">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-gray-50 text-gray-600">
+                      <tr>
+                        <th className="text-left px-2 py-1.5 font-semibold w-40">Cause</th>
+                        <th className="text-left px-2 py-1.5 font-semibold">What it means</th>
+                        <th className="text-left px-2 py-1.5 font-semibold w-24">Direction</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-t border-gray-100">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">1. Engagement data (intentional)</td>
+                        <td className="px-2 py-1.5 text-gray-600">
+                          Pre-score sees only the creative; live score sees creative <b>+ actual reach, likes, ER</b>. The Gemini prompt instructs harsher critique on under-performing posts, so weak engagement drags creative scores down.
+                        </td>
+                        <td className="px-2 py-1.5 text-red-600">Live ↓</td>
+                      </tr>
+                      <tr className="border-t border-gray-100 bg-gray-50">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">2. Visual analysis (now fixed)</td>
+                        <td className="px-2 py-1.5 text-gray-600">
+                          Pre-score sends raw image/video <b>bytes</b> to Gemini (real pixel analysis). Live scoring previously only passed Meta CDN URLs, which Gemini can't fetch — so visual / brand / pacing were guessed from text. <b>Fixed:</b> live scorer now downloads bytes too. Re-scored posts will close most of this gap.
+                        </td>
+                        <td className="px-2 py-1.5 text-emerald-600">Aligned</td>
+                      </tr>
+                      <tr className="border-t border-gray-100">
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">3. Model randomness</td>
+                        <td className="px-2 py-1.5 text-gray-600">
+                          Gemini is non-deterministic at temperature &gt; 0. Both scorers now use temp 0.4 (aligned). Expect ±3 points natural variance even on identical inputs.
+                        </td>
+                        <td className="px-2 py-1.5 text-gray-500">±3 pts</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div className="bg-violet-50 border border-violet-100 rounded p-2 mt-2 text-[11px] text-violet-900">
+                  <b>How to read the delta:</b> after cause #2 is closed, the remaining gap is the honest
+                  signal — pre-score = creative potential, live score = creative × execution × audience response.
+                  Prediction-accuracy tracking in Past Drafts will tell you if pre-scoring is systematically
+                  too optimistic or pessimistic, and we can recalibrate the prompt over time.
+                </div>
+              </div>
+
               {/* Sources — all benchmark references, hyperlinked */}
               <div className="pt-3 border-t border-gray-100">
                 <div className="font-semibold text-gray-800 mb-1.5">Benchmark sources (Fashion vertical)</div>
