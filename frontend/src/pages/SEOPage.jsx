@@ -803,14 +803,19 @@ function ScoringRubricInfo() {
                       <tr className="border-t border-gray-100 bg-gray-50">
                         <td className="px-2 py-1.5 font-semibold text-gray-800">2. Visual analysis (now fixed)</td>
                         <td className="px-2 py-1.5 text-gray-600">
-                          Pre-score sends raw image/video <b>bytes</b> to Gemini (real pixel analysis). Live scoring previously only passed Meta CDN URLs, which Gemini can't fetch — so visual / brand / pacing were guessed from text. <b>Fixed:</b> live scorer now downloads bytes too.
+                          Pre-score and live score now both let Gemini <b>actually look at the image or video</b>.
+                          Same input, same method — no more guessing on visuals.
                         </td>
                         <td className="px-2 py-1.5 text-emerald-600">±8 pts<br/><span className="text-[9px] text-gray-500">Now aligned</span></td>
                       </tr>
                       <tr className="border-t border-gray-100">
-                        <td className="px-2 py-1.5 font-semibold text-gray-800">3. Model randomness</td>
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">3. AI's natural variance</td>
                         <td className="px-2 py-1.5 text-gray-600">
-                          Gemini is non-deterministic at temperature &gt; 0. Both scorers now use temp 0.4 (aligned). Expect ±3 points natural variance even on identical inputs.
+                          AI doesn't always give the exact same answer twice — it has a "creativity dial"
+                          called temperature. Lower = more predictable, higher = more varied. We set it
+                          to <b>0.4</b> (mostly consistent with a small amount of judgment) on both scorers.
+                          So even scoring the same post twice in a row may show a 2-3 point difference.
+                          That's normal AI behaviour, not a bug.
                         </td>
                         <td className="px-2 py-1.5 text-gray-500">±3 pts<br/><span className="text-[9px] text-gray-500">Inherent</span></td>
                       </tr>
