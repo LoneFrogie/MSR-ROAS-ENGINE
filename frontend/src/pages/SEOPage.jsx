@@ -733,9 +733,9 @@ function ScoringRubricInfo() {
                         <td className="px-2 py-1.5 text-gray-600">FB: &lt;2/5/10% · IG image: &lt;10/20/40% · Reels: &lt;20/50/100%</td>
                       </tr>
                       <tr className="border-t border-gray-100 bg-gray-50">
-                        <td className="px-2 py-1.5 font-semibold text-gray-800">Views</td>
+                        <td className="px-2 py-1.5 font-semibold text-gray-800">Views <span className="text-[9px] text-gray-400 font-normal">(video only)</span></td>
                         <td className="px-2 py-1.5 text-gray-600">
-                          <b>views ÷ followers</b> — true algorithm-amplification signal (NOT views÷reach, which gets inflated by replays from the same small audience)
+                          <b>views ÷ followers</b> — true algorithm-amplification signal (NOT views÷reach, which gets inflated by replays from the same small audience). <i>Chip hidden on image/carousel posts since views don't apply.</i>
                         </td>
                         <td className="px-2 py-1.5 text-gray-600">
                           &lt;8% 🔴 didn't pick up · 8-30% 🟡 followers only · 30-100% 🟢 followers + some non-followers · &gt;100% 🟢 pushed beyond audience
@@ -774,8 +774,12 @@ function ScoringRubricInfo() {
                 <div className="font-semibold text-gray-800 mb-1.5">Why Pre-Post and Live scores can differ</div>
                 <p className="text-[11px] text-gray-600 mb-2">
                   A pre-score and a live score on the same content often don't match exactly. The gap
-                  is meaningful — it's how the system learns over time. Three causes:
+                  is meaningful — it's how the system learns over time. Three causes, with typical impact:
                 </p>
+                <div className="bg-cyan-50 border border-cyan-100 rounded p-2 mb-2 text-[11px] text-cyan-900">
+                  <b>Live-score formula:</b> <code className="bg-white px-1 rounded">overall = 0.80 × creative + 0.20 × engagement</code><br/>
+                  <span className="text-cyan-800">where <b>creative</b> is the weighted Gemini score on the 7 criteria (same math as pre-score), and <b>engagement</b> is a 0-100 score derived deterministically from your ER + reach-penetration vs Fashion benchmarks.</span>
+                </div>
                 <div className="border border-gray-100 rounded overflow-hidden">
                   <table className="w-full text-[11px]">
                     <thead className="bg-gray-50 text-gray-600">
@@ -789,23 +793,26 @@ function ScoringRubricInfo() {
                       <tr className="border-t border-gray-100">
                         <td className="px-2 py-1.5 font-semibold text-gray-800">1. Engagement data (intentional)</td>
                         <td className="px-2 py-1.5 text-gray-600">
-                          Pre-score sees only the creative; live score sees creative <b>+ actual reach, likes, ER</b>. The Gemini prompt instructs harsher critique on under-performing posts, so weak engagement drags creative scores down.
+                          Pre-score sees only the creative; live score sees creative <b>+ actual reach, likes, ER</b>.
+                          Engagement is blended in at <b>20% weight</b> (creative stays 80%). A post that performs
+                          below Fashion median on ER + reach can lose up to <b>~15 points</b> from this blend alone;
+                          a post that exceeds top quartile can gain up to <b>+10 points</b>.
                         </td>
-                        <td className="px-2 py-1.5 text-red-600">Live ↓</td>
+                        <td className="px-2 py-1.5 text-red-600">±15 pts<br/><span className="text-[9px] text-gray-500">20% of total</span></td>
                       </tr>
                       <tr className="border-t border-gray-100 bg-gray-50">
                         <td className="px-2 py-1.5 font-semibold text-gray-800">2. Visual analysis (now fixed)</td>
                         <td className="px-2 py-1.5 text-gray-600">
-                          Pre-score sends raw image/video <b>bytes</b> to Gemini (real pixel analysis). Live scoring previously only passed Meta CDN URLs, which Gemini can't fetch — so visual / brand / pacing were guessed from text. <b>Fixed:</b> live scorer now downloads bytes too. Re-scored posts will close most of this gap.
+                          Pre-score sends raw image/video <b>bytes</b> to Gemini (real pixel analysis). Live scoring previously only passed Meta CDN URLs, which Gemini can't fetch — so visual / brand / pacing were guessed from text. <b>Fixed:</b> live scorer now downloads bytes too.
                         </td>
-                        <td className="px-2 py-1.5 text-emerald-600">Aligned</td>
+                        <td className="px-2 py-1.5 text-emerald-600">±8 pts<br/><span className="text-[9px] text-gray-500">Now aligned</span></td>
                       </tr>
                       <tr className="border-t border-gray-100">
                         <td className="px-2 py-1.5 font-semibold text-gray-800">3. Model randomness</td>
                         <td className="px-2 py-1.5 text-gray-600">
                           Gemini is non-deterministic at temperature &gt; 0. Both scorers now use temp 0.4 (aligned). Expect ±3 points natural variance even on identical inputs.
                         </td>
-                        <td className="px-2 py-1.5 text-gray-500">±3 pts</td>
+                        <td className="px-2 py-1.5 text-gray-500">±3 pts<br/><span className="text-[9px] text-gray-500">Inherent</span></td>
                       </tr>
                     </tbody>
                   </table>
@@ -1749,7 +1756,15 @@ function PostScoring() {
                 {/* Header line */}
                 <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                   <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${p.platform === 'instagram' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}`}>{p.platform}</span>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${tierColor(p.tier)}`}>Tier {p.tier} · {p.overall_score}/100</span>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${tierColor(p.tier)}`}
+                        title={p.engagement_score != null ? `Live blend (80/20):\nCreative ${p.creative_only_score}/100\nEngagement ${p.engagement_score}/100\nFinal ${p.overall_score}/100 (${p.engagement_adjustment >= 0 ? '+' : ''}${p.engagement_adjustment} from engagement)` : `Creative-only ${p.creative_only_score ?? p.overall_score}/100`}>
+                    Tier {p.tier} · {p.overall_score}/100
+                    {p.engagement_adjustment != null && p.engagement_adjustment !== 0 && (
+                      <span className={`ml-1 ${p.engagement_adjustment >= 0 ? 'opacity-70' : 'opacity-70'}`}>
+                        ({p.engagement_adjustment >= 0 ? '+' : ''}{p.engagement_adjustment})
+                      </span>
+                    )}
+                  </span>
                   {p.pre_score && (
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
@@ -1864,10 +1879,14 @@ function PostScoring() {
                       const sv = engagementCountBenchmark('saves', p.metrics?.saves || 0, followers);
                       // When ER is gated (reach too low) all engagement counts also become unreliable
                       const safeTone = (b) => gated ? (b.tone === 'good' ? 'ok' : 'weak') : b.tone;
+                      // Only show Views chip on video media — images/carousels have no views concept
+                      const isVideo = p.media_type === 'VIDEO' || p.media_type === 'REELS';
                       return (
                         <>
-                          <MetricChip label="Views"    value={(p.metrics?.views || 0).toLocaleString()}
-                                      tone={vtr.tone} tooltip={vtr.label ? `${vtr.label}\n${vtr.benchmark}` : undefined} />
+                          {isVideo && (
+                            <MetricChip label="Views"    value={(p.metrics?.views || 0).toLocaleString()}
+                                        tone={vtr.tone} tooltip={vtr.label ? `${vtr.label}\n${vtr.benchmark}` : undefined} />
+                          )}
                           <MetricChip label="Likes"    value={(p.metrics?.likes || 0).toLocaleString()}
                                       tone={safeTone(lk)} tooltip={lk.benchmark ? `${lk.label}\n${lk.benchmark}${gated ? '\n⚠ Reach too low — interpret cautiously' : ''}` : undefined} />
                           <MetricChip label="Comments" value={(p.metrics?.comments || 0).toLocaleString()}

@@ -98,6 +98,53 @@ def _compute_overall(scores: Dict[str, float]) -> int:
     return round(total * 10)  # × 10 -> 0-100
 
 
+# ── Deterministic engagement adjustment for live scores ──────────────
+# Applied AFTER Gemini's creative score to make audience-response impact
+# explicit and reproducible. Pre-scores have no metrics so this is skipped.
+ENGAGEMENT_WEIGHT = 0.20  # 20% of final score comes from real engagement vs benchmark
+CREATIVE_WEIGHT = 1.0 - ENGAGEMENT_WEIGHT  # 80% creative
+
+
+def _compute_engagement_score(metrics: Dict, platform: str, media_type: str) -> Optional[int]:
+    """
+    Return 0-100 score based on how this post's ER + reach-penetration compare
+    to fashion benchmarks. None if insufficient data.
+    """
+    er = metrics.get("engagement_rate") or 0
+    penetration = metrics.get("reach_penetration_pct") or 0  # already in % (0-100)
+    significance = metrics.get("er_significance")
+
+    if significance in ("noise", "unknown") or not penetration:
+        return None  # not enough signal to adjust
+
+    is_reel = media_type in ("VIDEO", "REELS")
+
+    # Fashion-vertical thresholds, same as UI benchmarks
+    if platform == "facebook":
+        er_thresholds = [0.04, 0.15, 0.5]
+        reach_thresholds = [2, 5, 10]
+    elif is_reel:
+        er_thresholds = [2.0, 4.0, 7.0]
+        reach_thresholds = [20, 50, 100]
+    else:
+        er_thresholds = [0.68, 1.5, 3.0]
+        reach_thresholds = [10, 20, 40]
+
+    er_pct = er * 100
+    # Map each metric to a 0-100 sub-score using benchmark anchors
+    def _anchored(value, thresholds):
+        weak_max, ok_max, good_max = thresholds
+        if value < weak_max:        return max(0, (value / weak_max) * 25)        # 0-25
+        if value < ok_max:          return 25 + ((value - weak_max) / (ok_max - weak_max)) * 25   # 25-50
+        if value < good_max:        return 50 + ((value - ok_max) / (good_max - ok_max)) * 25     # 50-75
+        return min(100, 75 + ((value - good_max) / good_max) * 25)                # 75-100+
+
+    er_score = _anchored(er_pct, er_thresholds)
+    reach_score = _anchored(penetration, reach_thresholds)
+    # Blend 60% ER + 40% reach (ER is the harder signal, reach matters but is more volatile)
+    return round(0.6 * er_score + 0.4 * reach_score)
+
+
 def _compute_tier(overall: int) -> str:
     for tier, threshold in TIER_THRESHOLDS.items():
         if overall >= threshold:
@@ -262,9 +309,28 @@ OUTPUT (return JSON matching this schema exactly):
         result = json.loads(resp.text.strip())
         # Override Gemini's fuzzy overall + tier with deterministic weighted math
         sub = result.get("scores", {}) or {}
-        result["overall_score"] = _compute_overall(sub)
+        creative_score = _compute_overall(sub)
+
+        # Live-score blend: 80% creative + 20% engagement (when metrics available).
+        # Pre-scores have no metrics, so creative_score stands alone — this is
+        # exactly the 20-point swing range the user sees as the pre-vs-live gap.
+        # Need reach_penetration_pct on metrics, so enrich here if not yet done.
+        from app.config.settings import settings as _s
+        engagement_score = _compute_engagement_score(metrics, post.get("platform", ""), post.get("media_type", ""))
+        if engagement_score is not None:
+            blended = round(CREATIVE_WEIGHT * creative_score + ENGAGEMENT_WEIGHT * engagement_score)
+            result["overall_score"] = blended
+            result["creative_only_score"] = creative_score
+            result["engagement_score"] = engagement_score
+            result["engagement_adjustment"] = blended - creative_score  # signed delta for transparency
+        else:
+            result["overall_score"] = creative_score
+            result["creative_only_score"] = creative_score
+            result["engagement_score"] = None
+            result["engagement_adjustment"] = 0
         result["tier"] = _compute_tier(result["overall_score"])
         result["scoring_weights"] = SCORING_WEIGHTS  # surface to UI for transparency
+        result["live_blend_weights"] = {"creative": CREATIVE_WEIGHT, "engagement": ENGAGEMENT_WEIGHT}
         result["post_id"] = post.get("id")
         result["permalink_url"] = post.get("permalink_url")
         result["media_url"] = post.get("media_url") or post.get("thumbnail_url")
