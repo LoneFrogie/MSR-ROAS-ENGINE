@@ -1197,36 +1197,106 @@ function PrePostScoring() {
         ) : (
           <div className="space-y-2">
             {drafts.map(d => (
-              <div key={d.caption_hash} className="border border-gray-100 rounded p-2 text-xs hover:bg-gray-50">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${d.platform === 'instagram' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}`}>{d.platform}</span>
-                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${tierColor(d.tier)}`}>
-                    Tier {d.tier} · {d.overall_score}/100
-                  </span>
-                  <span className="text-[10px] text-gray-500 uppercase">{d.media_type}</span>
-                  <span className="text-[10px] text-gray-400">
-                    {d.scored_at ? new Date(d.scored_at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
-                  </span>
-                  {d.actual_score && (
-                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border ${
-                      (d.actual_score.overall_score - d.overall_score) >= 0
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : 'bg-red-50 text-red-700 border-red-200'
-                    }`}>
-                      Live {d.actual_score.overall_score} · Δ{(d.actual_score.overall_score - d.overall_score) >= 0 ? '+' : ''}{d.actual_score.overall_score - d.overall_score}
+              <details key={d.caption_hash} className="border border-gray-100 rounded p-2 text-xs hover:bg-gray-50 group">
+                <summary className="cursor-pointer list-none">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="text-gray-400 group-open:rotate-90 transition-transform inline-block text-[10px]">▶</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${d.platform === 'instagram' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}`}>{d.platform}</span>
+                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${tierColor(d.tier)}`}>
+                      Tier {d.tier} · {d.overall_score}/100
                     </span>
+                    <span className="text-[10px] text-gray-500 uppercase">{d.media_type}</span>
+                    <span className="text-[10px] text-gray-400">
+                      {d.scored_at ? new Date(d.scored_at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                    </span>
+                    {d.actual_score && (
+                      <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                        (d.actual_score.overall_score - d.overall_score) >= 0
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-red-50 text-red-700 border-red-200'
+                      }`}>
+                        Live {d.actual_score.overall_score} · Δ{(d.actual_score.overall_score - d.overall_score) >= 0 ? '+' : ''}{d.actual_score.overall_score - d.overall_score}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-gray-700 italic line-clamp-2 leading-snug ml-4">
+                    "{d.caption || '(no caption)'}"
+                  </div>
+                </summary>
+
+                {/* Full breakdown — same fields shown during the original pre-score session */}
+                <div className="mt-3 pt-3 border-t border-gray-100 space-y-3 ml-4">
+                  {/* 7-criteria score grid */}
+                  <div className="grid grid-cols-7 gap-1">
+                    {CRITERIA_LEGEND.map(c => {
+                      const v = (d.scores || {})[c.key] || 0;
+                      return (
+                        <div key={c.key} className="text-center" title={c.desc}>
+                          <div className={`text-sm font-bold ${v >= 8 ? 'text-emerald-600' : v >= 5 ? 'text-amber-600' : 'text-red-600'}`}>{v}</div>
+                          <div className="text-[9px] text-gray-500 uppercase">{c.label}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Predicted performance */}
+                  {d.predicted_performance && (
+                    <div className="bg-amber-50 border border-amber-100 rounded p-2 text-[11px]">
+                      <span className="font-semibold text-amber-700">Predicted performance: </span>
+                      <span className="text-gray-700">{d.predicted_performance}</span>
+                    </div>
+                  )}
+
+                  {/* Strengths / Weaknesses */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                    <div>
+                      <div className="font-semibold text-emerald-700 mb-1">Strengths</div>
+                      <ul className="text-gray-700 space-y-0.5 list-disc ml-4">
+                        {(d.strengths || []).map((s, i) => <li key={i}>{s}</li>)}
+                      </ul>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-red-700 mb-1">Weaknesses</div>
+                      <ul className="text-gray-700 space-y-0.5 list-disc ml-4">
+                        {(d.weaknesses || []).map((s, i) => <li key={i}>{s}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* Recommendations */}
+                  {d.recommendations?.length > 0 && (
+                    <div className="bg-violet-50 rounded p-2 text-[11px]">
+                      <div className="font-semibold text-violet-700 mb-1">Recommendations</div>
+                      <ul className="text-gray-700 space-y-0.5 list-disc ml-4">
+                        {d.recommendations.map((s, i) => <li key={i}>{s}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Suggested rewrites */}
+                  {d.suggested_hook && (
+                    <div className="text-[11px]">
+                      <span className="font-semibold text-gray-600">Suggested hook: </span>
+                      <span className="text-gray-800 italic">"{d.suggested_hook}"</span>
+                    </div>
+                  )}
+                  {d.suggested_caption && (
+                    <div className="text-[11px]">
+                      <div className="font-semibold text-gray-600 mb-0.5">Suggested caption:</div>
+                      <div className="text-gray-800 italic bg-gray-50 rounded p-2 whitespace-pre-line">{d.suggested_caption}</div>
+                    </div>
+                  )}
+
+                  {/* Trend origin if this draft came from "Adapt to brand" */}
+                  {d.inspired_by_trend && (
+                    <div className="bg-cyan-50 border border-cyan-100 rounded p-2 text-[11px]">
+                      <span className="font-semibold text-cyan-800">Adapted from trend: </span>
+                      <span className="text-gray-700 italic">"{d.inspired_by_trend.original_hook}"</span>
+                      <span className="text-gray-500"> ({d.inspired_by_trend.original_platform})</span>
+                    </div>
                   )}
                 </div>
-                <div className="text-gray-700 italic line-clamp-2 leading-snug">
-                  "{d.caption || '(no caption)'}"
-                </div>
-                {d.suggested_caption && (
-                  <details className="mt-1">
-                    <summary className="text-[10px] text-violet-600 cursor-pointer hover:underline">Show suggested rewrite</summary>
-                    <div className="text-gray-700 italic bg-violet-50 rounded p-1.5 mt-1 whitespace-pre-line">{d.suggested_caption}</div>
-                  </details>
-                )}
-              </div>
+              </details>
             ))}
           </div>
         )}
